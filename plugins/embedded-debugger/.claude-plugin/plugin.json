@@ -1,0 +1,8 @@
+{
+  "name": "embedded-debugger",
+  "version": "0.1.0",
+  "description": "Drive GDB against a physical MCU over JTAG/SWD (OpenOCD, probe-rs, pyOCD) and capture its serial console to diagnose firmware faults.",
+  "author": { "name": "Wilderness Labs" },
+  "license": "MIT",
+  "keywords": ["embedded", "gdb", "openocd", "jtag", "swd", "esp32", "stm32", "meadow"]
+}

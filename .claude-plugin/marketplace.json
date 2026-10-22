@@ -1,0 +1,11 @@
+{
+  "name": "wildernesslabs-skills",
+  "owner": { "name": "Wilderness Labs" },
+  "plugins": [
+    {
+      "name": "embedded-debugger",
+      "source": "./plugins/embedded-debugger",
+      "description": "Drive GDB against a physical MCU over JTAG/SWD and capture its serial console to diagnose firmware faults."
+    }
+  ]
+}
