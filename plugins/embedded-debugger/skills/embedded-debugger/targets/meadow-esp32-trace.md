@@ -70,7 +70,7 @@ follows a partial boot-log line.
 | **4** | **Panic**, so a core dump should now exist | 10 | SDIO |
 | 5 | Interrupt watchdog | | |
 
-`SharedEnums` repeats these as `StatusCodes::EspResetUnknown`=50 …
+`SharedEnums` repeats these as `StatusCodes::EspResetUnknown`=50 ...
 `EspResetSdio`=60. Seeing 50-60 in a `Status code:` line is the same
 information mapped into the status space. It is not a new code.
 
@@ -115,7 +115,7 @@ So:
 
 | Gate | Set by | Controls |
 |---|---|---|
-| Compile time | `build.sh --tracemessages` → `-DTRACE_MESSAGES=1` | whether `TRACE_MESSAGE`, `ERROR_MESSAGE` and `TRACE_HEX_BUFFER` compile at all. **Without it even `ERROR_MESSAGE` compiles to nothing** |
+| Compile time | `build.sh --tracemessages` -> `-DTRACE_MESSAGES=1` | whether `TRACE_MESSAGE`, `ERROR_MESSAGE` and `TRACE_HEX_BUFFER` compile at all. **Without it even `ERROR_MESSAGE` compiles to nothing** |
 | Run time | `CoProcessor.LogComponents` in `meadow.config.yaml`, sent by the STM32 | which tags are raised to INFO |
 
 Runtime component names, matched case-insensitively (`Logging::TurnLoggingOn`):
@@ -178,9 +178,9 @@ I (1017) RequestHandlerBase: 11 00 00 00 03 00 00 00 47 42 00
 
 | Tag | Dumped in | Direction |
 |---|---|---|
-| `RequestHandlerBase` | `QueueEsp32Message`, as a complete request is queued to WiFi, System or BT | STM32 → ESP32 |
-| `TransportProviderBase` | `QueueMessageForStm32`, followed by `+++MW` | ESP32 → STM32 |
-| `SPI` | `ProcessTransportMessage`, after the line `Preparing to send message:` | ESP32 → STM32, as it is put on the wire |
+| `RequestHandlerBase` | `QueueEsp32Message`, as a complete request is queued to WiFi, System or BT | STM32 -> ESP32 |
+| `TransportProviderBase` | `QueueMessageForStm32`, followed by `+++MW` | ESP32 -> STM32 |
+| `SPI` | `ProcessTransportMessage`, after the line `Preparing to send message:` | ESP32 -> STM32, as it is put on the wire |
 | `WiFi` | `AccessPoint.cpp`, `WiFiRequestHandler.cpp` | WiFi internals |
 
 Field notes:

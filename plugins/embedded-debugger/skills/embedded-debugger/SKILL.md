@@ -136,6 +136,28 @@ a stale file, or was copied from elsewhere. Add a cheap reading that differs
 sharply between the modes, such as a timed hot loop, and check it in both runs.
 Identical results from two "different" runs prove nothing until then.
 
+**Rule out a fast reset loop before calling anything a hang.** A board that
+faults, reboots and reruns the same start-up every few seconds looks hung from
+outside: the host tool stops printing, and every PC sample lands in busy,
+plausible code. Once, 30 samples "all in the JIT compiler" read as one endless
+compile for over 15 minutes. Mono was really compiling the same start-up
+methods after each of 1400+ reboots. Samples taken in *different* functions do
+not prove progress. Read a reset counter, a boot banner or an uptime value, and
+take it twice.
+
+**Use test values that show how they were corrupted.** Zero, null and small
+round numbers are bad probes: many different bugs turn them into the same
+wrong answer. A null and `0x1234` both arrived as `0`. Only a real pointer
+(`0xc03a53c0` arriving as `0xc03a`) showed that the value was being shifted
+right by 16. That pointed to the exact instruction. Pick values whose
+corruption you can recognise, and probe each argument position separately.
+
+**Dead stack still holds evidence.** Memory just below the current SP is
+whatever the last callee or trampoline left there, and frames do not always
+overwrite all of it. A register save area left behind by a call path you
+could not catch with a breakpoint can still show what a register held at the
+call. Map out which slots the current frame wrote before trusting the rest.
+
 ## 3. Running sessions
 
 ### Batch script pattern
@@ -169,6 +191,31 @@ Guard the GDB process itself so it cannot hang forever (macOS has no
 ```bash
 perl -e 'alarm 540; exec @ARGV' gdb -q -batch -x s.gdb fw.elf > out.log 2>&1
 ```
+
+### Scripts must always resume the target
+
+A plain GDB batch script stops at the first error, for example `frame function
+foo` when no such frame exists. Every command after it, including your final
+`monitor resume`, is skipped, and the target stays halted. A session that
+`alarm` kills is worse: Python's buffered output is lost and breakpoints can
+stay armed. For anything that can fail midway, write the session in GDB's
+Python and resume in `finally`:
+
+```python
+import gdb
+gdb.execute("target extended-remote localhost:3333")
+try:
+    gdb.execute("monitor halt", to_string=True)
+    ...                                # samples, reads, breakpoints
+finally:
+    gdb.execute("delete")
+    gdb.execute("monitor resume", to_string=True)
+    gdb.execute("detach")
+```
+
+Wrap per-sample reads that may fail (walking frames, dereferencing) in their
+own `try`. After any killed session, run a short cleanup script (halt, delete,
+resume) and check the halt bit before going on.
 
 ### Filtering output
 
@@ -229,6 +276,14 @@ the exact instruction of interest over a broad sweep with a condition.
   delivery while execution continues.
 - **A serial terminal's scrollback mixes runs.** Ask the user to clear it
   before each run, or you will read a stale crash dump as a fresh one.
+- **A branch into the middle of an instruction runs a different program.** With
+  variable-length encodings (Thumb-2, RISC-V C, Xtensa), a target that is not an
+  instruction boundary in the disassembly decodes the following halfwords as
+  something else. Inline literals already disassemble as junk, so junk alone
+  means nothing. Check generated code's branch targets against the instruction
+  list instead. Once, `b.w` skipped a literal but landed 2 bytes late, inside
+  `orr.w ip, ip, #1`, whose second halfword runs as `lsrs r1, r0, #16`. That
+  silently corrupted an argument on every call made from that code layout.
 
 ### The two-stage arming pattern
 
@@ -355,7 +410,10 @@ directory that disappears with the session.
   Meadow CLI (version gate, firmware store, what the deploy deletes) and
   checking GPIO at the pins over SWD; proving JIT versus interpreter, running
   Mono's mini test suite with the test runner and its baseline, thread names
-  and NSH `ps` on the second CDC port, and how ESP32 socket errors reach an app.
+  and NSH `ps` on the second CDC port, and how ESP32 socket errors reach an app;
+  a late fault that looks like a hang (reset code `0x14`), breaking a
+  fault-driven reset loop, naming the method the JIT is compiling, probing JIT
+  calling conventions from managed code, and Mono mixed mode (`--interp=jit=`).
   Read the two family files first
 - `targets/meadow-esp32-trace.md` - decoding the Meadow ESP32 console: the
   `+++RST/RDY/SIR/MW/BSY` control markers (the console *is* the control link),

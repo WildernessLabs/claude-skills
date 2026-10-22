@@ -9,10 +9,10 @@ A Meadow board is **two processors that are debugged separately**:
 
 The STM32 checkouts go by more than one directory name: Rebase may be
 `OS/Rebase` or `OS/Meadow.OS`, and Legacy may be `OS/Legacy` or `OS/Meadow`.
-Tell them apart by what is in the tree, not the name — Legacy carries the
+Tell them apart by what is in the tree, not the name -- Legacy carries the
 `openocd` submodule and enables semihosting in its OpenOCD config (below).
 
-Read the per-chip files first — this one records **only what comes from the two
+Read the per-chip files first -- this one records **only what comes from the two
 being on one board**, which is where the time goes:
 
 - STM32 side: `stm32-family.md`
@@ -24,7 +24,7 @@ being on one board**, which is where the time goes:
 > **Provenance.** `(measured)` = observed on this bench on 2026-09-20, board
 > attached with both probes. `(repo)` = read out of the project's own configs
 > or source, which is stronger than recall but is not the same as watching it
-> happen. `(assumed)` = neither — check it the first time it matters.
+> happen. `(assumed)` = neither -- check it the first time it matters.
 >
 > `(repo)` is an addition to the template's two markers. It earns its place
 > here because much of what this board does is pinned down by checked-in
@@ -41,7 +41,7 @@ STM32 repositories.
 | Side | Build | Selected by |
 |---|---|---|
 | STM32, Rebase | `~/GitHub/ThirdParty/openocd` | `MEADOW_OPENOCD_DIR` |
-| STM32, Legacy | `openocd/` in the Legacy checkout (`OS/Legacy` or `OS/Meadow`) — a git submodule, built in the repository | repo-local path |
+| STM32, Legacy | `openocd/` in the Legacy checkout (`OS/Legacy` or `OS/Meadow`) -- a git submodule, built in the repository | repo-local path |
 | ESP32 | Espressif's `openocd-esp32` fork, from the ESP-IDF tool install | first on `PATH` |
 
 Version in use for the STM32 `(measured)`: `0.12.0+dev-02429-ge4c49d860
@@ -52,7 +52,7 @@ each tool.** The two repositories carry different NuttX versions, and an
 OpenOCD build decodes task state against the layout it was built for. This is
 the expensive kind of mismatch: a build pointed at the wrong NuttX does not
 refuse the connection, it returns a **thread list that looks plausible and is
-wrong** — task names from the wrong offsets, states that never change,
+wrong** -- task names from the wrong offsets, states that never change,
 stacks attributed to the wrong task. The same class of failure as loading
 symbols that do not match the firmware (below), reached by a different route,
 and worth suspecting the moment a task list stops making sense.
@@ -62,7 +62,7 @@ So: one OpenOCD per repository, and neither is the one on `PATH`.
 which is the good case; the bad case is reaching for `openocd` by name and
 silently getting the Espressif fork.
 
-## Connection — STM32 `(repo, confirmed by connecting)`
+## Connection -- STM32 `(repo, confirmed by connecting)`
 
 The supported route is the repository's own scripts, two terminals:
 
@@ -75,9 +75,9 @@ What `debug.cfg` sets that differs from a stock STM32 session:
 
 - **`gdb_port 4242`**, not 3333. Connecting to 3333 out of habit reaches
   either nothing or, worse, an ESP32 session left running.
-- **`stm32f7x.cpu configure -rtos nuttx`** — OpenOCD presents NuttX tasks as
+- **`stm32f7x.cpu configure -rtos nuttx`** -- OpenOCD presents NuttX tasks as
   GDB threads. This needs the kernel symbols; without them it degrades noisily.
-- **`reset_config none separate`** — present for ST-Link clones with no RST
+- **`reset_config none separate`** -- present for ST-Link clones with no RST
   pin. With a genuine V3M it can go; if reset behaves oddly, suspect this line.
 - `debug_level 1`, `tcl port 6666`.
 
@@ -123,7 +123,7 @@ this bench, so the flag fails rather than falling back.
 
 ### Legacy differs from Rebase in one way that changes behaviour `(repo)`
 
-The two `debug.cfg` files are near-identical — same probe, same target, same
+The two `debug.cfg` files are near-identical -- same probe, same target, same
 `gdb_port 4242`, same `-rtos nuttx`. The difference is that **Legacy enables
 semihosting and Rebase comments it out**:
 
@@ -156,12 +156,12 @@ Identification registers, all read halted `(measured)`:
 | `DBGMCU_IDCODE` `0xE0042000` | `0x10016451` | DEV_ID `0x451` = F76x/F77x; REV_ID `0x1001` = rev Z |
 | `FP_CTRL` `0xE0002000` | `0x10000080` | 8 breakpoints, FPBv2 |
 | `DWT_CTRL` `0xE0001000` | `0x40000000` | 4 watchpoints |
-| `AIRCR` `0xE000ED0C` | `0xFA050000` | PRIGROUP 0 — all 4 bits preemption, no subpriority |
+| `AIRCR` `0xE000ED0C` | `0xFA050000` | PRIGROUP 0 -- all 4 bits preemption, no subpriority |
 
 The 8/4 figure matches what `gdb/.gdbinit` declares to the remote, so that
 file is telling the truth.
 
-### `VTOR` moves — read it every time `(measured)`
+### `VTOR` moves -- read it every time `(measured)`
 
 Two halts on this board, under two images, gave two different answers:
 
@@ -173,24 +173,24 @@ Two halts on this board, under two images, gave two different answers:
 **Neither is a property of the board.** An earlier draft of this file recorded
 the first as if it were; that was wrong, and this table replaces it.
 
-`0x00200000` is the **ITCM alias** of flash — the same physical memory as
+`0x00200000` is the **ITCM alias** of flash -- the same physical memory as
 `0x08000000` via AXIM, `0x07E00000` lower. It is where the part boots, and the
-option bytes say so: `OPTCR1 = 0x00400080` → `BOOT_ADD0 = 0x0080 << 14 =
+option bytes say so: `OPTCR1 = 0x00400080` -> `BOOT_ADD0 = 0x0080 << 14 =
 0x00200000` `(measured)`. So a vector address that looks `0x07E00000` off from
 the linker script is the other alias, not a fault.
 
 `0x08040000` is **the NuttX kernel**. An earlier draft guessed "the user image"
 from `flash.cfg`'s offsets; that was wrong. The images on disk settle it by
-direct comparison `(measured)` — the first words of `nuttx.bin` are byte-for-byte
+direct comparison `(measured)` -- the first words of `nuttx.bin` are byte-for-byte
 the table read from flash at `0x08040000`:
 
 | | first words |
 |---|---|
-| flash `@ 0x08000000` and `Meadow.OS.bin` offset 0 | `20080000 0801161d 08011509 08011515 …` |
-| flash `@ 0x08040000`, `nuttx.bin` offset 0, **and** `Meadow.OS.bin` offset `0x40000` | `20035620 081661c9 081661d3 081661d3 …` |
+| flash `@ 0x08000000` and `Meadow.OS.bin` offset 0 | `20080000 0801161d 08011509 08011515 ...` |
+| flash `@ 0x08040000`, `nuttx.bin` offset 0, **and** `Meadow.OS.bin` offset `0x40000` | `20035620 081661c9 081661d3 081661d3 ...` |
 
 So **`Meadow.OS.bin` is a three-part image**, assembled by `build.sh` at the
-end of a build (only for a protected build — the whole block is skipped when
+end of a build (only for a protected build -- the whole block is skipped when
 `CONFIG_BUILD_FLAT=y`):
 
 ```
@@ -203,12 +203,12 @@ Meadow.OS.bin          Meadow.BL.bin  (bootloader) at offset 0
 ```
 
 Flashed at `0x08000000`, that gives **bootloader at `0x08000000`** and
-**kernel + user at `0x08040000`** — which is why `VTOR` ends up at
+**kernel + user at `0x08040000`** -- which is why `VTOR` ends up at
 `0x08040000`: the bootloader runs, then hands over to the kernel, which points
 `VTOR` at its own table.
 
 The CRC matters when a board will not start. It sits at `0x001BFFFC` inside the
-OS image, so **absolute `0x081FFFFC` — the last word of the 2 MB flash** — and
+OS image, so **absolute `0x081FFFFC` -- the last word of the 2 MB flash** -- and
 is generated by `srec_cat` over the cropped image. A partial or hand-patched
 write leaves it stale, and a board that refuses to leave the bootloader with no
 console output at all is worth checking against this before anything else.
@@ -233,7 +233,7 @@ combined image is present.
 ```
 
 The bootloader has **distinct stubs** per exception. **The NuttX kernel funnels
-every exception to one address** — so on the running system a HardFault and a
+every exception to one address** -- so on the running system a HardFault and a
 MemManage arrive at the same code, and the vector alone will not tell you which
 fired. Read `CFSR`/`HFSR` for that.
 
@@ -242,15 +242,15 @@ Which of the two is live tells you where a fault happened: a fault taken with
 
 **The kernel ELF is `nuttx/nuttx.elf`** `(measured)`. The build target is
 `nuttx.elf` (`make -C nuttx MEADOW_OS=1 nuttx.elf`), and nothing produces a file
-called `nuttx/nuttx` — so a search for that name concludes "the kernel was never
+called `nuttx/nuttx` -- so a search for that name concludes "the kernel was never
 built" when it was. `gdb/.gdbinit` has this right and loads `../nuttx/nuttx.elf`;
 `Documentation/Debugging.md` has it wrong in two places, both its Prerequisites
 and its `load-nuttx-symbols` listing.
 
 Do not reach for `nuttx_user.elf` for a kernel address: its `.text` runs
-`0x08040238`–`~0x08105840`, `addr2line` returns `?? ??:0` for anything in the
+`0x08040238`-`~0x08105840`, `addr2line` returns `?? ??:0` for anything in the
 kernel, and its entry `0x0808b2d1` is `hcom_main` in
-`apps/system/hcom/hcom_startup_manager.c:126` — the user side, not what `VTOR`
+`apps/system/hcom/hcom_startup_manager.c:126` -- the user side, not what `VTOR`
 names.
 
 With the kernel ELF, the vector table decodes `(measured)`:
@@ -327,12 +327,12 @@ Use the `cu.*` node, not `tty.*` `(measured)`. Both exist for the ST-Link VCP;
 `cu.*` is the callout device and opens without waiting on carrier detect.
 115200 8N1 works, and a plain `serial.Serial(port, 115200)` reads it.
 
-### One port can give you both processors — when the relay is on `(measured)`
+### One port can give you both processors -- when the relay is on `(measured)`
 
 The NuttX syslog **can relay the ESP32's console into its own output**, tagged
 `ESP Log:`. **This is not always enabled.** It was on for the capture below and
 is off on other boards and configurations, so confirm it is present before
-relying on it — and do not read its absence as a dead ESP32.
+relying on it -- and do not read its absence as a dead ESP32.
 
 ```
 [    0.769000] [10] Meadow 1.99.0.19595 rebooted, H/W:F7CoreComputeV2, Mono:Enabled, Trace level:0x7f, to:Host+UART (ramlog)
@@ -343,7 +343,7 @@ relying on it — and do not read its absence as a dead ESP32.
 
 When it is on it is the most useful instrument on the board: one port, opened
 once, gives a **time-ordered interleaving of both processors against one
-clock** — exactly what the SPI link's failures need, and what two separately
+clock** -- exactly what the SPI link's failures need, and what two separately
 captured logs cannot give you, since nothing ties their timestamps together.
 
 It is a relay through the STM32, not a tap on the wire, which has two
@@ -356,7 +356,7 @@ ESP32 must be watched with the STM32 halted, or when the relay itself is under
 suspicion. That path is direct from the ESP32 and does not depend on the STM32
 at all.
 
-**That console is also the ESP32 → STM32 control link** `(repo)`. The `+++RST`,
+**That console is also the ESP32 -> STM32 control link** `(repo)`. The `+++RST`,
 `+++RDY`, `+++SIR`, `+++MW` and `+++BSY` markers in it are `printf`s the STM32
 parses, not log noise. Decoding them, and the rest of the ESP32's output, is
 covered in `meadow-esp32-trace.md`.
@@ -368,26 +368,26 @@ NuttX task, so `[5]`, `[10]` and `[11]` above are three different tasks.
 
 **USART1 is the console.** `CONFIG_USART1_SERIAL_CONSOLE=y` in `nuttx/.config`
 and in every board defconfig, and the peripheral confirms it: `CR1 = 0x0000002D`
-= `UE|RE|TE|RXNEIE`, `BRR = 0x3AA` (938) → 115200 on a 108 MHz APB2.
+= `UE|RE|TE|RXNEIE`, `BRR = 0x3AA` (938) -> 115200 on a 108 MHz APB2.
 
-**UART5 is also live**, identically configured — `CR1 = 0x0000002D`,
-`BRR = 0x1D5` (469) → 115200 on a 54 MHz APB1. It is the other end of the
+**UART5 is also live**, identically configured -- `CR1 = 0x0000002D`,
+`BRR = 0x1D5` (469) -> 115200 on a 54 MHz APB1. It is the other end of the
 control-and-state link to the ESP32. Every other USART/UART reads `CR1 = 0`, so
 exactly two are running:
 
 | | CR1 | BRR | Baud | Role |
 |---|---|---|---|---|
-| USART1 `0x40011000` | `0x2D` | 938 | 115200 | NuttX console / syslog → ST-Link VCP |
+| USART1 `0x40011000` | `0x2D` | 938 | 115200 | NuttX console / syslog -> ST-Link VCP |
 | UART5 `0x40005000` | `0x2D` | 469 | 115200 | link to the ESP32 |
-| USART2/3/6, UART4/7/8 | `0x00` | — | — | off |
+| USART2/3/6, UART4/7/8 | `0x00` | - | - | off |
 
-The **polled** write path is `arm_lowputc()` — see `stm32-family.md` for the
+The **polled** write path is `arm_lowputc()` -- see `stm32-family.md` for the
 busy-wait loop. It is the one to report through from a fault handler, because
 it does not depend on the interrupt that a fault has just stopped.
 
 **Faults print a stack dump**: `CONFIG_ARCH_STACKDUMP=y`. **Divide-by-zero and
 unaligned access do not fault at all** until the `enable_hardfault` macro in
-`gdb/.gdbinit` sets the trap bits — measured `CCR = 0x00070200`, both traps
+`gdb/.gdbinit` sets the trap bits -- measured `CCR = 0x00070200`, both traps
 clear. And BusFault and UsageFault are not separately enabled
 (`SHCSR = 0x00010000`, MemManage only), so both escalate to HardFault.
 
@@ -406,14 +406,14 @@ The five settings that govern visibility:
 
 | Setting | Effect |
 |---|---|
-| `CoProcessor.LogDestination` | `UART` sends the ESP32's log messages to the NuttX UART — **this is what produces the `ESP Log:` lines** |
+| `CoProcessor.LogDestination` | `UART` sends the ESP32's log messages to the NuttX UART -- **this is what produces the `ESP Log:` lines** |
 | `CoProcessor.LogComponents` | which ESP components may send to the STM32 at all; filtered at source, so anything not listed is not merely hidden, it is never sent |
 | `InternalDebug.Uart1Use` | `trace` routes syslog to the STM32 UART that reaches the debug probe |
 | `InternalDebug.TraceLevel` | how much detail. **Valid values 0-3; 2 is usually enough** |
 | `InternalDebug.CopyApplicationOutputToUart` | copies managed application output to the same UART. No managed code is present yet, so it has no visible effect today |
 
 **The file's own comment for `TraceLevel` says `Valid values: 1-4` and is
-wrong** `(measured)` — the range is 0-3. Do not set 4.
+wrong** `(measured)` -- the range is 0-3. Do not set 4.
 
 **Applying a change** `(per the maintainer, 2026-10-22)`. Edit the app
 project's `meadow.config.yaml`, then either:
@@ -432,7 +432,7 @@ channel-13 network goes Connecting -> Disconnected.
 For ESP32 logging settings (`LogComponents`), see `meadow-esp32-trace.md`.
 
 Measured on this board, which is exactly why the earlier captures look as they
-do — `LogDestination: UART` gave the `ESP Log:` relay, `LogComponents:
+do -- `LogDestination: UART` gave the `ESP Log:` relay, `LogComponents:
 WiFi;System` is why only those components appeared, and `Uart1Use: trace` put
 syslog on the ST-Link VCP:
 
@@ -455,8 +455,8 @@ that point never applies any of it.
 So **silence is not evidence that a setting is wrong**. It is equally
 consistent with the board never having reached the code that reads the file,
 which is the more serious fault and the one to rule out first. Establish that
-the board boots past kernel startup — the `Meadow.OS initialization began at`
-banner is the marker — before changing any of these settings to chase missing
+the board boots past kernel startup -- the `Meadow.OS initialization began at`
+banner is the marker -- before changing any of these settings to chase missing
 output. Changing configuration to fix an early-boot hang produces a differently
 configured board that still hangs.
 
@@ -484,10 +484,10 @@ Meadow.OS initialization began at 2026-09-20 16:22:47 Meadow UTC time.
 ```
 
 `Meadow.OS initialization began at` is the first line; anything before it is
-left over from the previous run. The banner names the hardware variant —
+left over from the previous run. The banner names the hardware variant --
 **`F7CoreComputeV2`** on this board, which is not the only Meadow there is, so
 do not generalise pin-level facts from it. It also states the live trace
-setting — `Trace level:0x7f, to:Host+UART (ramlog)` here — which is where to
+setting -- `Trace level:0x7f, to:Host+UART (ramlog)` here -- which is where to
 look before concluding anything from silence, including about the `ESP Log:`
 relay above. `Meadow reset code`, reset count and power cycle count persist
 across resets and are the quickest check that a board is rebooting when it
@@ -525,14 +525,14 @@ BST/GMT, and GitHub reports UTC (`...Z`).
 The STM32 is the SPI **master** and initiates everything; the ESP32 is a slave
 (`spi_slave_initialize`, `VSPI_HOST`) and only ever responds `(repo)`. So:
 
-- Break in the ESP32's SPI path and the STM32 does not stop — it keeps issuing
+- Break in the ESP32's SPI path and the STM32 does not stop -- it keeps issuing
   requests, times them out, and may decide the coprocessor is dead and reset
   it out from under the debugger.
 - Break on the STM32 and the ESP32 sits in its slave queue waiting for a
   transaction that never comes, which is indistinguishable from idle.
 
 **Resetting the STM32 restarts the ESP32 too** `(measured)`. A bare
-`init; reset run` over SWD — with `srst` not even connected — produced
+`init; reset run` over SWD -- with `srst` not even connected -- produced
 `rst:0x1 (POWERON_RESET)` on the ESP32 about 0.77 s into the STM32's boot. The
 STM32 drives the coprocessor's reset during its own initialisation, so there is
 no such thing as restarting only the application processor. Any ESP32 state
@@ -549,7 +549,7 @@ that has already happened without anything having to be halted while it does.
 
 | | |
 |---|---|
-| Control and state | UART, STM32 → ESP32 `(repo)` |
+| Control and state | UART, STM32 -> ESP32 `(repo)` |
 | Requests and responses | SPI, STM32 master `(repo)` |
 | ESP32 SPI pins | MISO `GPIO19`, MOSI `GPIO23`, CLK `GPIO18`, CS `GPIO5` `(repo)` |
 | SPI transaction limit | **4092 bytes**, a hardware constraint `(repo)` |
@@ -559,7 +559,7 @@ that has already happened without anything having to be halted while it does.
 
 **A poll request that never returns is not a hang.** Poll requests are given an
 infinite timeout deliberately; the STM32 owns their setup and teardown. Chasing
-one as a stall is wasted effort — establish first whether the request is a poll.
+one as a stall is wasted effort -- establish first whether the request is a poll.
 
 **A request buffer may be reused as its own response.** Handlers recycle the
 request message into the response, so a buffer inspected after dispatch is not
@@ -573,7 +573,7 @@ Kernel and user are separate binaries with separate symbols:
 |---|---|---|
 | `nuttx/nuttx.bin` (kernel) | `0x08000000` | `nuttx/nuttx` |
 | `nuttx/nuttx_user.bin` (user) | `0x08040000` | `nuttx/nuttx_user.elf` |
-| `nuttx/Meadow.OS.bin` | `0x08000000` | — |
+| `nuttx/Meadow.OS.bin` | `0x08000000` | - |
 
 Each repository has its own **`flash.sh`** that writes the OS to the board,
 driving `flash.cfg` over the same ST-Link. Use the one belonging to the
@@ -584,7 +584,7 @@ interchange. The Rebase documentation also describes a `--dfu` route via
 **Check both symbol files exist before starting.** On this bench
 `nuttx/nuttx_user.elf` is present and **`nuttx/nuttx` is not** `(measured)`, so
 a session started now would come up with user symbols only and kernel frames as
-bare addresses — which reads exactly like a corrupt stack.
+bare addresses -- which reads exactly like a corrupt stack.
 
 ### The external QSPI flash is a separate world `(measured)`
 
@@ -604,13 +604,13 @@ boot:
 
 Geometry: 16384 erase sectors, 4096-byte erase, 256-byte page.
 
-Offsets in this table are **QSPI-relative and start at zero** — they are not
+Offsets in this table are **QSPI-relative and start at zero** -- they are not
 CPU addresses and have nothing to do with `0x08000000`. Reading one as the
 other is an easy and confusing mistake.
 
 ### `Assert Data`: nothing writes it `(measured)`
 
-It looks like the STM32's answer to the ESP32 core dump partition — 32 KB that
+It looks like the STM32's answer to the ESP32 core dump partition -- 32 KB that
 would survive the reset which produced it. **It is not one. In this build
 nothing writes it at all**, and a crash leaves it untouched.
 
@@ -621,13 +621,13 @@ to miss. All of it lives in `F7MeadowOS/`, outside the `nuttx/` tree:
 |---|---|---|
 | Writer | `hcom_nx_exec_ex_flash_write_assertion_data()`, `hcom_nx/create_fs/hcom_nx_fs_flash.c:1187` | implemented |
 | Location | `hcom_nx_exec_ex_flash_assert_data_location()`, same file | implemented, and correct |
-| Reader | `hcom_nx_exec_ex_flash_read_assertion_data()` | implemented, **no callers** — the source says so in a comment |
+| Reader | `hcom_nx_exec_ex_flash_read_assertion_data()` | implemented, **no callers** -- the source says so in a comment |
 | Caller of the writer | `hcom_nx/create_fs/hcom_nx_fs_flash_tests.c:516` | **a flash test, and the only one repo-wide** |
-| NuttX crashdump hook | — | `CONFIG_BOARD_CRASHDUMP_NONE=y`, and no `board_crashdump` is defined in `F7MeadowOS/` or the board directory |
+| NuttX crashdump hook | - | `CONFIG_BOARD_CRASHDUMP_NONE=y`, and no `board_crashdump` is defined in `F7MeadowOS/` or the board directory |
 
 The location function computes `MONO_RUNTIME (0x300000) + OS_UPDATE (0x1C0000)
-+ 2 × erase block (0x2000)` = **`0x4C2000`**, exactly the offset the boot log
-prints. So the partition is real, reserved and correctly targeted — and the
++ 2 x erase block (0x2000)` = **`0x4C2000`**, exactly the offset the boot log
+prints. So the partition is real, reserved and correctly targeted -- and the
 only thing that has ever written to it is a test.
 
 Its documentation says "the assertion data from `up_assert`", and that is the
@@ -638,7 +638,7 @@ hook that would provide one is compiled out and unimplemented.
 
 - Do not go looking there after a crash. Nothing put anything there.
 - `CONFIG_ARCH_STACKDUMP=y` means a fault prints a stack dump to the console,
-  and on this board **that console output is the whole of the record** — if it
+  and on this board **that console output is the whole of the record** -- if it
   was not captured live, it is gone. Hold the port open across the fault.
 - The ESP32 core dump partition remains the only working after-the-fact fault
   record on the board. That asymmetry is worth remembering: the coprocessor
@@ -658,7 +658,7 @@ eval "monitor nuttx.state_offset %d", &((struct tcb_s *)(0))->task_state
 ```
 
 An earlier draft of this file warned that these offsets could go stale when a
-NuttX change moved a field. **They cannot** — literal values are present but
+NuttX change moved a field. **They cannot** -- literal values are present but
 commented out, and the `eval` form recomputes them every session. That is the
 correct reading of the file.
 
@@ -671,7 +671,7 @@ task list.
 GDB helpers in `gdb/`: `Nuttx.py` (tasks, stacks), `Nuttx_Tasks.py` (TCB
 pretty-printer), `NuttxHeap.py` (heap blocks), `NVIC.py`, `Tracing.py`,
 `gdb-dashboard.src`, `ignore_signals.py`, and `STM32F777.svd` for register
-decode. They need GDB's embedded Python to match a venv the script builds —
+decode. They need GDB's embedded Python to match a venv the script builds --
 `debug.sh` rebuilds `.venv` when the versions drift, so run GDB through
 `debug.sh` rather than directly unless there is a reason not to.
 
@@ -691,8 +691,8 @@ does not.
 
 | | Address | Reads as | Selected when |
 |---|---|---|---|
-| `BOOT_ADD0` | `0x00200000` | identical to `0x08000000` — the ITCM alias of application flash | BOOT0 low (normal) |
-| `BOOT_ADD1` | `0x00100000` | identical to `0x1FF00000` — the **ST factory system bootloader** | BOOT0 high |
+| `BOOT_ADD0` | `0x00200000` | identical to `0x08000000` -- the ITCM alias of application flash | BOOT0 low (normal) |
+| `BOOT_ADD1` | `0x00100000` | identical to `0x1FF00000` -- the **ST factory system bootloader** | BOOT0 high |
 
 `0x00100000` and `0x1FF00000` return the same words, and their vectors point
 into `0x1FF0xxxx`, so `BOOT_ADD1` is the ITCM alias of system memory rather
@@ -701,7 +701,7 @@ than anything of Meadow's.
 **So `BOOT_ADD1` is used, and it is the DFU route.** Pulling BOOT0 high boots
 the factory bootloader instead of Meadow.OS, which is what makes
 `flash.sh --dfu` and `dfu-util` work. It is also the way back from a board
-whose flashed image will not start — and unlike everything in
+whose flashed image will not start -- and unlike everything in
 `meadow.config.yaml`, it does not depend on the application being healthy.
 
 `OPTCR = 0xFFFFAAFD` also carries `RDP = 0xAA`, readout protection **level 0**.
@@ -721,7 +721,7 @@ as failure and is not:
 | `InternalDebug.CopyApplicationOutputToUart: true` produces nothing | There is no managed application output to copy |
 | `MonoControl.Options: --debug` in `meadow.config.yaml` has no effect | Nothing consumes it |
 | The QSPI `Runtime` partition (3072 KB) is empty | Nothing has written to it |
-| The banner says `Mono:Disabled` — or `Mono:Enabled` | A **kernel build-config flag** (`build.sh -m|--mono`), independent of whether the runtime binary is present. Both states occur on working boards, and neither means the runtime is there |
+| The banner says `Mono:Disabled` -- or `Mono:Enabled` | A **kernel build-config flag** (`build.sh -m|--mono`), independent of whether the runtime binary is present. Both states occur on working boards, and neither means the runtime is there |
 
 Do not spend a session on any of these. They are the gap the project exists to
 close, not evidence of a fault.
@@ -735,7 +735,7 @@ was built to support, the other is what is actually in external flash.
 script accepts it, but the Mono code is not in the tree, so there is nothing for
 it to build. A plain `./build.sh` is the only build available, and the
 `Mono:Disabled` image it produces is therefore the correct and expected state of
-a board flashed from Rebase today — not a misconfiguration to be put right.
+a board flashed from Rebase today -- not a misconfiguration to be put right.
 
 It follows that **a board reporting `Mono:Enabled` was not flashed from a
 current Rebase build.** If that matters for what you are chasing, find out where
@@ -839,12 +839,20 @@ JIT and 1861-2514 ms interpreted**. Three more traps:
     `--llvmonly-interp`, `--debug`, `--soft-breakpoints`.
   - Prefix matches: `--optimize=`, `--gc-params=`, `--trace=`, `--profile=`.
 
-  So `--interp=jit=<Class>` (Mono's mixed mode) **never reaches Mono**. A whole
-  morning's "mixed-mode bisection" was really the plain interpreter every time.
-  Check the whitelist before trusting any new option. The mode probe shows
-  whether `--interp` took effect, but not whether its sub-options did.
-  - Mono's own `--interp=<opts>` does not override a mode already set. Even if
-    hcom passed it, it would need plain `--interp` before it.
+  Before PR #762, `--interp=jit=<Class>` (Mono's mixed mode) **never reached
+  Mono**. A whole morning's "mixed-mode bisection" was really the plain
+  interpreter every time. Check the whitelist before trusting any new option.
+  The mode probe shows whether `--interp` took effect, but not whether its
+  sub-options did.
+  - Mono's own `--interp=<opts>` does not override the mode, so #762 also
+    appends a plain `--interp`. The boot syslog line `Mono options: ...` shows
+    what Mono actually received.
+  - Mixed mode also needs runtime fa4051d3836 `(measured, 2026-10-22)`.
+    `interp_parse_options` freed the `jit=` class names it had stored, and
+    `p (char*)mono_interp_jit_classes->data` read `"\001"`. Read that global
+    over SWD to check a sub-option took effect. The match is on the short class
+    name. Measured: the named class's loop runs at JIT speed (75-92 ms) and
+    another class's at interpreter speed (1.8-1.9 s).
   - `--trace=N:<Namespace>` does pass, and gives method entry and exit without
     changing the generated code.
 
@@ -997,6 +1005,15 @@ next boot overwrites it.
   kernel's `memcmp` under `hcom_nx_exec_ex_flash_copy_blocks_to_memory` (the
   runtime copy into SDRAM), then the bootloader's `VerifyPrimaryImage`.
 - `CFSR`/`HFSR` read 0. The reset clears them, so zeros do not mean no fault.
+- **A late fault looks like a hang** `(measured, 2026-10-22)`. When Mono faults
+  10-15 s into the app, USB stays up long enough each boot that the CLI just
+  stops printing. SWD samples then land in normal start-up work, such as JIT
+  compiles of `AppContext:TryGetSwitch` again and again. Read the RAM syslog
+  banner first: `Meadow reset code: 0x14, reset count: 1430` settled it.
+  Reset code `0x14` is software reset (`0x10`) plus the NRST pin bit (`0x04`),
+  from `meadow_os.h` (RCC CSR >> 24). A kernel panic after a fault gives it, and
+  so does hcom's deliberate reset. To tell them apart, use the breakpoints
+  below: `arm_memfault`/`arm_hardfault` versus `meadow_os_reset_board`.
 
 ### hcom resets the board whenever Mono exits
 
@@ -1016,6 +1033,17 @@ A crash, an `abort()` and a clean `return 42` from `Main` all end in a reset, so
   Mono itself).
 - `meadow file write` disables Mono and reboots before writing (maintainer), so
   run `meadow runtime enable` after every deploy.
+- **A CPU fault never reaches that proxy** `(measured, 2026-10-22)`. The kernel
+  panics and resets the board directly, so the `meadow_os_reset_board` break
+  never fires. What worked instead was stopping Mono from starting:
+  `hbreak *<hcom_mono_ctrl_is_mono_enabled>` (a user-flash function; look up
+  its address in `nuttx_user.elf`), then `set $r0 = 0` and `set $pc = $lr`, then
+  resume. hcom logs "Mono is disabled" for that boot and the CLI can deploy;
+  `meadow app run` re-enables the runtime. Two things failed:
+  - clearing BK31R bit `0x800` (the runtime-enable flag) from plain OpenOCD
+    while the board kept resetting, because `halt` reported "target was in
+    unknown state" and the write did not take;
+  - `meadow runtime disable` retried in a loop, which never got a window.
 
 ### Breakpoints that classify a Mono failure
 
@@ -1053,6 +1081,46 @@ the same stop. One measured case: `CFSR = 0x01000000` is UsageFault UNALIGNED,
 from an `strd` to a halfword-aligned JIT code address. STRD, LDRD, LDM and STM
 always need word alignment, even though plain LDR and STR to the same address
 are allowed.
+
+### What is the JIT compiling? `(measured, 2026-10-22)`
+
+Mono's runtime lives in `nuttx_user.elf` with full DWARF (load it with
+`add-symbol-file`), so a GDB Python sampler can name the method being compiled.
+On each sample, halt, walk `gdb.newest_frame().older()` until
+`f.name() == "mini_method_compile"`, then read the method name:
+`m = f.read_var("method"); m["klass"]["name"].string() + ":" + m["name"].string()`.
+Put the task name (`g_readytorun.head->name`) next to it. Different methods in
+every sample, with the same start-up methods coming back
+(`AppContext:TryGetSwitch` again and again), mean Mono keeps restarting, not one
+stuck compile. A frame chain ending at `0x0` or `??` is JIT code with no unwind
+info, which is normal.
+
+### Probing JIT calling conventions from managed code `(measured, 2026-10-22)`
+
+To find a JIT miscompile of arguments, you need neither the debugger nor a
+runtime rebuild.
+1. Build a `DynamicMethod` that `ldarg`s its parameters and `call`s a
+   `[MethodImpl(NoInlining)]` static method that returns what it received. For
+   a span, return
+   `(nint)Unsafe.AsPointer(ref MemoryMarshal.GetReference(s))` plus `s.Length`.
+2. Vary the shape so each argument register is covered: `(int,int,int,int)`;
+   a span starting in `r0`, `r1` or `r2`; a `null` object versus a real one.
+3. Compare the result with a direct C# call. Also compare inlined with not
+   inlined callees, and first call with second, to separate the call-site code
+   from trampoline and patching effects.
+
+This isolated the Thumb-2 `arm_branch_long` bug (#756, `r1 = r0 >> 16`) in
+three deploys. Use marker values whose corruption you can recognise (see the
+general skill).
+
+### Diagnostic lines that are not the app's
+
+`SOCKDIAG af=... fd=...` and `CONNDIAG fd=... ret=... errno=...` on the app
+console come from shims in `apps/system/mono/mono_main.c` around
+`SystemNative_Socket`/`SystemNative_Connect` (on main since 2ccc725edd9; #758
+tracks removing them). One pair is printed per socket. They make a handy socket
+counter: `ret=0` on every `CONNDIAG`, and the same fd coming back each cycle,
+mean sockets are being closed.
 
 ### Seeing the app's stdout/stderr
 
@@ -1148,7 +1216,7 @@ toggles", and is independent of whether anyone is watching the LED.
   `stm32_boot.c` and is worth knowing before enabling debug output anywhere
   early: `stm32_boardinitialize()` runs before `nx_start()` has initialised
   `g_readytorun`, and the RAMLOG syslog backend calls `sched_lock()`, which
-  dereferences a NULL `this_task()` that early — **a silent HardFault**, because
+  dereferences a NULL `this_task()` that early -- **a silent HardFault**, because
   `DEBUGASSERT` is compiled out unless `CONFIG_DEBUG_ASSERTIONS` is also set.
   Two lessons generalise: do not call `syslog()` from board init, and
   `CONFIG_DEBUG_FEATURES` without `CONFIG_DEBUG_ASSERTIONS` removes the
@@ -1161,7 +1229,7 @@ toggles", and is independent of whether anyone is watching the LED.
 - **An earlier version also called the `0x08040000` table "the user image"**,
   reasoning from `flash.cfg`'s offsets. It is the NuttX kernel. The offsets in a
   flash script describe what that script **would** write, not what is on the
-  board — here the script short-circuits on `Meadow.OS.bin` and never reaches
+  board -- here the script short-circuits on `Meadow.OS.bin` and never reaches
   them. Compare image bytes against flash rather than reading offsets out of a
   script.
 
@@ -1176,7 +1244,7 @@ toggles", and is independent of whether anyone is watching the LED.
 - **A rebuild does not match the flashed image, even at the same version**
   `(measured)`. Rebuilding produced `1.99.0.19595`, the same string the board
   prints, while the kernel vector entries moved from `081661c9`/`081661d3` to
-  `081661c1`/`081661cb` — eight bytes. Symbols from a fresh build applied to
+  `081661c1`/`081661cb` -- eight bytes. Symbols from a fresh build applied to
   firmware flashed from an older one give plausible, wrong answers. **Reflash,
   or symbolicate against the exact image that is on the board.**
 
@@ -1206,7 +1274,7 @@ toggles", and is independent of whether anyone is watching the LED.
   in a way that looks like a dead probe.
 
 - **An impossible halt address on the STM32 is probably erratum 3092511**, not
-  memory corruption — see `stm32-family.md`. OpenOCD reports the workaround on
+  memory corruption -- see `stm32-family.md`. OpenOCD reports the workaround on
   every connect, and the message is easy to scroll past.
 
 - **A GDB batch script that ends without `monitor resume` leaves the STM32

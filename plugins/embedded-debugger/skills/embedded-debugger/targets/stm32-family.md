@@ -1,7 +1,7 @@
 # Target profile: STM32 (STMicroelectronics, Arm Cortex-M, NVIC)
 
 Read this before a board-specific STM32 file. It records what holds across the
-Cortex-M cores STM32 parts are built on, and — more usefully — **how to find
+Cortex-M cores STM32 parts are built on, and -- more usefully -- **how to find
 out** the things that vary by part.
 
 > **Provenance: mostly unmeasured.** Written from architecture references, then
@@ -12,8 +12,8 @@ out** the things that vary by part.
 > as verified and is not is worse than no profile.
 >
 > A single part confirming an item does not make it true of the family. The
-> constants that are architectural — memory layout, the exception-number
-> offset, how to read the trigger counts — travel. Trigger counts, priority
+> constants that are architectural -- memory layout, the exception-number
+> offset, how to read the trigger counts -- travel. Trigger counts, priority
 > bits and what a fault handler does do not, which is why this file gives the
 > procedure for reading them rather than the answer.
 
@@ -28,7 +28,7 @@ Probes, commonest first:
 | ST-LINK V2/V3 (on-board or standalone) | `-f interface/stlink.cfg -f target/stm32<fam>x.cfg` | `--chip STM32<PART>` | `--target stm32<part>` |
 | J-Link | `-f interface/jlink.cfg -f target/stm32<fam>x.cfg` | same | same |
 
-`interface/stlink.cfg` covers V2 and V3 alike — there is no per-version file.
+`interface/stlink.cfg` covers V2 and V3 alike -- there is no per-version file.
 OpenOCD names the probe it found on connect, which is the quickest confirmation
 that the right one is attached `(measured on F777)`:
 
@@ -41,7 +41,7 @@ A **target voltage near 0** means the probe is attached but the board is not
 powered, which otherwise presents as a target that cannot be examined.
 
 **Clock speed**: `Unable to match requested speed 2000 kHz, using 1000 kHz` is
-normal and harmless — the adapter picks the nearest it can divide to.
+normal and harmless -- the adapter picks the nearest it can divide to.
 
 **`reset_config`**: ST-Link clones without the RST pin wired need
 `reset_config none separate`. On a genuine ST-Link it can usually be left out;
@@ -53,7 +53,7 @@ more than the exact part; getting it wrong usually shows up as a flash driver
 that cannot identify the device.
 
 GDB is `arm-none-eabi-gdb`, or `gdb-multiarch` on a host that ships no Arm GDB.
-Connect with `target extended-remote localhost:3333` — prefer the explicit host
+Connect with `target extended-remote localhost:3333` -- prefer the explicit host
 over `:3333`, which resolves differently on some hosts.
 
 **RTOS awareness**: OpenOCD will try to read RTOS thread state if the target cfg
@@ -63,7 +63,7 @@ until threads are actually needed.
 
 **Debug link and console**: an ST-LINK presents the debug link and a virtual COM
 port as separate endpoints on one USB device. They are independent, so the
-console can be held open across a reset — see `../SKILL.md` section 1b. This is
+console can be held open across a reset -- see `../SKILL.md` section 1b. This is
 a real advantage over targets where the two share a UART; use it.
 
 ## Console `(assumed)`
@@ -97,7 +97,7 @@ from any handler. `up_putc()` sits on top of it.
 **Semihosting is not that path.** It halts the core on every call. It works, it
 is convenient, and it makes timing-dependent faults disappear. Do not use it to
 investigate anything that depends on timing, and never leave it enabled in a
-build that has to run without a debugger attached — the target stalls at the
+build that has to run without a debugger attached -- the target stalls at the
 first call with nothing to service it.
 
 ## Memory map and breakpoints `(assumed)`
@@ -110,13 +110,13 @@ Architecturally fixed across STM32:
 | SRAM | `0x20000000` | `break` works |
 | Cortex-M7 ITCM (F7, H7) | `0x00000000` | see below |
 | Cortex-M7 DTCM (F7, H7) | `0x20000000` | `break` works |
-| Peripherals | `0x40000000` | — |
-| Private peripheral bus (SCB, NVIC, FPB, DWT) | `0xE0000000` | — |
+| Peripherals | `0x40000000` | - |
+| Private peripheral bus (SCB, NVIC, FPB, DWT) | `0xE0000000` | - |
 
 A software breakpoint in XIP flash usually fails silently: GDB reports it armed
 and it never fires. Use `hbreak` for anything in `0x08000000`.
 
-**Trigger counts vary by part — read them rather than recalling them:**
+**Trigger counts vary by part -- read them rather than recalling them:**
 
 ```
 x/1wx 0xE0002000   # FP_CTRL  - FPB code comparators
@@ -127,14 +127,14 @@ x/1wx 0xE0001000   # DWT_CTRL - NUMCOMP in bits 31:28
 nibble, bits 14:12 the high bits. Reading bits 7:4 alone is right only for
 parts with eight or fewer, and silently wrong above that.
 
-Worked example `(measured on F777)`: `FP_CTRL = 0x10000080` → bits 7:4 = 8,
+Worked example `(measured on F777)`: `FP_CTRL = 0x10000080` -> bits 7:4 = 8,
 bits 14:12 = 0, so **8 breakpoints**; bits 31:28 = 1 means FPBv2.
-`DWT_CTRL = 0x40000000` → bits 31:28 = 4, so **4 watchpoints**. OpenOCD prints
+`DWT_CTRL = 0x40000000` -> bits 31:28 = 4, so **4 watchpoints**. OpenOCD prints
 the same conclusion on connect (`target has 8 breakpoints, 4 watchpoints`), so
 the registers are a cross-check rather than the only route.
 
-On Cortex-M the two pools are separate — FPB for breakpoints, DWT for
-watchpoints — so spending one does not cost the other.
+On Cortex-M the two pools are separate -- FPB for breakpoints, DWT for
+watchpoints -- so spending one does not cost the other.
 
 **Cortex-M7 erratum 3092511** `(measured on F777)`. OpenOCD reports it on
 connect:
@@ -155,7 +155,7 @@ impossible halt address on a Cortex-M7 before ruling this out.
 - **BOOT0**, and on some parts option bytes, select what runs out of reset:
   flash, system memory (the factory bootloader), or SRAM. A board that comes up
   in the system bootloader looks like firmware that hangs immediately.
-  On STM32F7 the boot addresses are option bytes, not just a pin — read them:
+  On STM32F7 the boot addresses are option bytes, not just a pin -- read them:
 
   ```
   x/3wx 0x40023C14   # FLASH_OPTCR, OPTCR1, OPTCR2
@@ -163,13 +163,13 @@ impossible halt address on a Cortex-M7 before ruling this out.
 
   `OPTCR1` holds `BOOT_ADD0` in bits 15:0 and `BOOT_ADD1` in 31:16, each a
   **boot address shifted right by 14**. `(measured on F777)` `OPTCR1 =
-  0x00400080` → `BOOT_ADD0 = 0x0080`, i.e. `0x0080 << 14 = 0x00200000`, and
-  `BOOT_ADD1 = 0x0040` → `0x00100000`. So this part boots from the **ITCM alias
+  0x00400080` -> `BOOT_ADD0 = 0x0080`, i.e. `0x0080 << 14 = 0x00200000`, and
+  `BOOT_ADD1 = 0x0040` -> `0x00100000`. So this part boots from the **ITCM alias
   of flash**, which is why its vector table is not at `0x08000000`.
 
   The two are selected by the BOOT0 pin: `BOOT_ADD0` when it is low,
   `BOOT_ADD1` when high. Identify what each points at by **reading it and
-  comparing**, not by decoding the number — `(measured on F777)` `0x00100000`
+  comparing**, not by decoding the number -- `(measured on F777)` `0x00100000`
   returns the same words as `0x1FF00000`, with vectors into `0x1FF0xxxx`, which
   identifies it as the ITCM alias of the ST factory system bootloader and makes
   BOOT0-high the DFU route.
@@ -182,8 +182,8 @@ impossible halt address on a Cortex-M7 before ruling this out.
   runs**. Read it at the moment you need it rather than once. `(measured on
   F777)` the same board read `VTOR = 0x00200000` under one image and
   `0x08040000` under another, so neither is a property of the board. On
-  Cortex-M7 the same flash is reachable through two buses — `0x08000000` via
-  AXIM and `0x00200000` via ITCM — so a `VTOR` that looks wrong may just be the
+  Cortex-M7 the same flash is reachable through two buses -- `0x08000000` via
+  AXIM and `0x00200000` via ITCM -- so a `VTOR` that looks wrong may just be the
   other alias of the address the linker script names, differing by `0x07E00000`
   while pointing at one word of flash. Do not "correct" it to `0x08000000`; see
   `meadow.md` for the worked case.
@@ -193,7 +193,7 @@ impossible halt address on a Cortex-M7 before ruling this out.
   region before the copy is overwritten by it while GDB still reports it armed.
   Use the two-stage arming pattern: a hardware breakpoint in flash after the
   copy, then set the RAM breakpoints.
-- `monitor reset halt` and `monitor reset init` differ — `init` runs the cfg's
+- `monitor reset halt` and `monitor reset init` differ -- `init` runs the cfg's
   init hooks, which on some families set up clocks or flash latency. If halting
   after reset produces a target that cannot read flash, try the other one.
 - Triggers do not always clear when a GDB session is killed. A board that hits a
@@ -213,7 +213,7 @@ impossible halt address on a Cortex-M7 before ruling this out.
 the handler's exception number, not the mode of the code it interrupted. The
 interrupted context is recovered from the exception stack frame, whose location
 `EXC_RETURN` tells you: bit 2 set means the frame is on PSP, clear means MSP.
-Read `LR` at handler entry before anything overwrites it — after a few calls it
+Read `LR` at handler entry before anything overwrites it -- after a few calls it
 is gone and the frame can no longer be found reliably.
 
 ## Interrupt controller `(assumed)`
@@ -236,7 +236,7 @@ number straight out of `IPSR` is the classic way to blame the wrong peripheral.
 
 **Priority grouping.** `AIRCR` bits 10:8 (`PRIGROUP`) split the priority field
 between preemption and subpriority. `(measured on F777)` `AIRCR = 0xFA050000`
-→ `PRIGROUP = 0`, so with 4 implemented bits every bit is preemption priority
+-> `PRIGROUP = 0`, so with 4 implemented bits every bit is preemption priority
 and there is no subpriority. Two interrupts at the same level therefore cannot
 preempt one another at all, which changes what a "higher priority" fix does.
 
@@ -253,7 +253,7 @@ and must be checked on the part:
   below it numerically-higher-is-lower-priority. Getting this wrong produces
   corruption that appears far from its cause. The `freertos` skill covers the
   `configASSERT` that catches it; enable it before hunting anything else. NuttX
-  has the equivalent ceiling and no such assertion — see `meadow.md`.
+  has the equivalent ceiling and no such assertion -- see `meadow.md`.
 
 ## Failure signatures `(assumed)`
 
@@ -265,19 +265,19 @@ x/1wx 0xE000ED24   # SHCSR - MEMFAULTENA b16, BUSFAULTENA b17, USGFAULTENA b18
 x/1wx 0xE000ED14   # CCR   - DIV_0_TRP b4, UNALIGN_TRP b3
 ```
 
-Measured on the Meadow F777 running NuttX: `SHCSR = 0x00010000` — only
+Measured on the Meadow F777 running NuttX: `SHCSR = 0x00010000` -- only
 **MemManage is enabled**, so BusFault and UsageFault are not taken as
 themselves and **escalate straight to HardFault**. A search for a BusFault
 handler that never runs is wasted; the handler that runs is HardFault, and
 `HFSR.FORCED` is set to say so.
 
 `CCR = 0x00070200` on the same board: `DIV_0_TRP` and `UNALIGN_TRP` are both
-**clear**, so divide-by-zero and unaligned access do not fault — they return
+**clear**, so divide-by-zero and unaligned access do not fault -- they return
 nonsense silently. Set them before hunting a bug of either kind. NuttX ships a
 GDB macro for exactly this; see `meadow.md`.
 
 **Cortex-M7 caches change what the debug link sees** `(measured on F777)`. The
-same `CCR` has bits 16, 17 and 18 set — data cache, instruction cache and
+same `CCR` has bits 16, 17 and 18 set -- data cache, instruction cache and
 branch prediction all on, matching `CONFIG_ARMV7M_DCACHE`/`ICACHE` in the
 build. A value written through the debug link may not be seen by the core, and
 memory read through the link may be stale with respect to the core's cache.
@@ -296,12 +296,12 @@ x/1wx 0xE000ED38   # BFAR  - faulting address, valid only if CFSR.BFARVALID
 ```
 
 `HFSR.FORCED` set means a configurable fault escalated because its handler was
-disabled or it faulted again — the useful information is in `CFSR`, not `HFSR`.
+disabled or it faulted again -- the useful information is in `CFSR`, not `HFSR`.
 
 Two things to establish for the board, because both are firmware decisions and
 neither is knowable from the architecture:
 
-- **What an assertion does** — reboot or hang — and where it prints.
+- **What an assertion does** -- reboot or hang -- and where it prints.
 - **What the fault handler does.** A default handler is often `while (1) {}`,
   which is indistinguishable from the hang being chased and produces no output
   at all. If that is what is there, replace it before investigating, or rely on
@@ -315,5 +315,5 @@ halts at an address of `0xFFFFFFFE` is locked up, not executing.
 
 Empty on purpose. This is the section the template calls the most valuable part
 of the file and the only part that cannot be reconstructed later. Fill it from
-real sessions — each entry being what was believed, what it cost, and what
-would have caught it sooner — and delete this paragraph once there is one.
+real sessions -- each entry being what was believed, what it cost, and what
+would have caught it sooner -- and delete this paragraph once there is one.
