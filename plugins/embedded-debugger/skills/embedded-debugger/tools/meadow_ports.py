@@ -6,6 +6,7 @@ device serial number), so the names change when a hub is added, removed or
 re-enumerates. The vendor/product IDs do not. This prints one line per role:
 
     meadow_cdc=/dev/cu.usbmodem<serial>1        Meadow USB CDC (HCOM, Meadow CLI)
+    meadow_cdc2=/dev/cu.usbmodem<serial>3       second Meadow CDC (--dualcdc): syslog, or NSH with --nsh
     stlink_vcp=/dev/cu.usbmodem21203            ST-Link V3 virtual COM port
     espprog_jtag=/dev/cu.usbserial-21100        ESP-Prog channel A (JTAG, OpenOCD)
     esp_console=/dev/cu.usbserial-21101         ESP-Prog channel B (ESP32 console)
@@ -37,12 +38,13 @@ WCH_SNIFFER_PIDS = {0x55D4}  # the user's sniffer on the cell modem UART (2026-1
 def find_roles():
     roles = {}
     ftdi = []
+    meadow = []
     for port in list_ports.comports():
         device = port.device
         if not device.startswith("/dev/cu."):
             continue
         if port.vid == MEADOW_VID:
-            roles["meadow_cdc"] = device
+            meadow.append(device)
         elif (port.vid == STLINK_VID) and (port.pid in STLINK_PIDS):
             roles["stlink_vcp"] = device
         elif (port.vid == FTDI_VID) and (port.pid == FTDI_DUAL_PID):
@@ -54,6 +56,13 @@ def find_roles():
             while ("uart_sniffer%d" % n) in roles:
                 n += 1
             roles["uart_sniffer%d" % n] = device
+    # A --dualcdc build exposes two CDC nodes from one board: <serial>1 is HCOM and
+    # <serial>3 is the second channel (the syslog without --nsh, NSH with it).
+    meadow.sort()
+    if meadow:
+        roles["meadow_cdc"] = meadow[0]
+    if len(meadow) > 1:
+        roles["meadow_cdc2"] = meadow[1]
     # The STM32 ROM bootloader (DFU) is not a serial port, so pyserial does not
     # list it.  It shows up as "STM32  BOOTLOADER", 0483:DF11, in the USB tree.
     if "meadow_cdc" not in roles:
@@ -89,6 +98,7 @@ def find_dfu():
 
 DESCRIPTIONS = {
     "meadow_cdc": "Meadow USB CDC (HCOM, Meadow CLI); absent until the OS runs hcom",
+    "meadow_cdc2": "second Meadow CDC (--dualcdc): syslog without --nsh, NSH with it",
     "meadow_dfu": "board is in the STM32 ROM bootloader (DFU), not running Meadow.OS",
     "stlink_vcp": "ST-Link virtual COM port",
     "espprog_jtag": "ESP-Prog channel A (JTAG; claimed by OpenOCD)",

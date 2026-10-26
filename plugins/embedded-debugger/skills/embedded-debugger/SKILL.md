@@ -410,7 +410,7 @@ directory that disappears with the session.
   Meadow CLI (version gate, firmware store, what the deploy deletes) and
   checking GPIO at the pins over SWD; proving JIT versus interpreter, running
   Mono's mini test suite with the test runner and its baseline, thread names
-  and NSH `ps` on the second CDC port, and how ESP32 socket errors reach an app;
+  and the second CDC port of a `--dualcdc` build (NSH `ps` with `--nsh`, the syslog without it), and how ESP32 socket errors reach an app;
   a late fault that looks like a hang (reset code `0x14`), breaking a
   fault-driven reset loop, naming the method the JIT is compiling, probing JIT
   calling conventions from managed code, and Mono mixed mode (`--interp=jit=`); the BG95-M3 cell modem over PPP: freeing COM1, the cell config files, the console-echo trap and reading the modem UART with an optional receive-only sniffer port.

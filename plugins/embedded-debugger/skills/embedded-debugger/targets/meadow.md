@@ -284,6 +284,7 @@ python3 ~/.claude/skills/embedded-debugger/tools/meadow_ports.py esp_console
 | Role | USB identity (stable) | Names seen (location-derived; will change) | What |
 |---|---|---|---|
 | `meadow_cdc` | `2E6A:0001` "Meadow F7 Micro", serial number = board ID | `cu.usbmodemMeadowApp1`; `cu.usbmodem<serial>1` (2026-10-14) | Meadow USB CDC: HCOM, Meadow CLI, `meadow listen`. **Absent** until the OS runs hcom, and during a reset loop |
+| `meadow_cdc2` | `2E6A:0001`, second node of the same board | `cu.usbmodem<serial>3` (`cu.usbmodem337B317434383`, 2026-10-26) | **Only in a `build.sh --dualcdc` build.** Without `--nsh` it carries the **syslog**; with `--nsh` it is the NSH console. See "The second USB CDC port: syslog or NSH" below |
 | `meadow_dfu` | `0483:DF11` "STM32  BOOTLOADER" (not a serial port; found in `ioreg -p IOUSB`) | n/a | The STM32 ROM bootloader: the board is in DFU mode and Meadow.OS is not running (SWD shows PC in `0x1ff0xxxx`). `flash.sh` over SWD still works |
 | `stlink_vcp` | `0483:374E` "STLINK-V3" | `cu.usbmodem21112203`; `cu.usbmodem21203` (2026-10-14); `cu.usbmodem1203` (2026-10-15) | ST-Link virtual COM port. Was the NuttX syslog on 2026-09; see the caveat below |
 | `espprog_jtag` | `0403:6010` "Dual RS232-HS" (FTDI FT2232H), interface A | `cu.usbserial-100`; `cu.usbserial-21112100`; `cu.usbserial-21100`; `cu.usbserial-1100` | ESP-Prog JTAG; claimed by OpenOCD over libusb |
@@ -364,6 +365,58 @@ covered in `meadow-esp32-trace.md`.
 
 Line format: `[ seconds.micros ] [ task ] message`. The bracketed number is the
 NuttX task, so `[5]`, `[10]` and `[11]` above are three different tasks.
+
+### The second USB CDC port: syslog or NSH `(per the maintainer; measured 2026-10-18 and 2026-10-26)`
+
+`build.sh --dualcdc` gives the board a **second USB CDC port** (`meadow_cdc2`,
+`cu.usbmodem<serial>3`, for example `cu.usbmodem337B317434383`) beside the HCOM/CLI port
+(`<serial>1`). The NuttX config has `CONFIG_USBDEV_COMPOSITE=y` and `CONFIG_CDCACM_COMPOSITE=y`.
+What the second port carries depends on `--nsh`:
+
+| Build | Second CDC port carries |
+|---|---|
+| `--dualcdc --nsh` | The NSH console (`ps`, procfs); see "Thread names, `ps`..." below |
+| `--dualcdc` without `--nsh` | **The NuttX syslog.** This is the way to get the syslog when COM1 (USART1) is needed for something else, such as the cell modem on mikroBUS 1 |
+
+When changing these options, do a full build (`build.sh --clean --force --dualcdc`), as the maintainer instructed; a plain incremental build was not tried.
+
+**Turning the syslog output on.** Use `meadow trace level 2`, or put this in
+`meadow.config.yaml`:
+
+```yaml
+InternalDebug:
+    TraceLevel: 2
+```
+
+**Leave `Uart1Use` out of the file**, or the output goes to COM1 instead. On 2026-10-26 I also
+kept the word out of comments, to be safe. The boot banner still says `to:none (ramlog)` while
+the port is carrying the syslog.
+
+**Capturing across a reset** `(measured, 2026-10-26)`:
+- The node disappears during a reset, so opening it before the reset fails. Start the reset
+  (SWD `reset run`), poll for the node, open it as soon as it exists, and keep reading.
+- The port reappeared about 0.3 s after the reset. The read still began at the boot's
+  `0.067 s` lines (`meadow_upd_initialize`), because the syslog is held in the RAM log.
+- 115200 in pyserial is fine; the baud rate is ignored on a CDC port.
+
+```python
+ser = None
+subprocess.run([...openocd... "init; reset run; sleep 500; shutdown"])
+while time.time() - t0 < seconds:
+    if ser is None:
+        if os.path.exists(cdc2):
+            try: ser = serial.Serial(cdc2, 115200, timeout=0)
+            except Exception: pass
+        time.sleep(0.01); continue
+    log += ser.read(4096)
+```
+
+**`meadow runtime enable` did not survive a following `meadow file write`, twice**
+`(measured, 2026-10-26)`. Both times enable reported ENABLED, a config file was written
+afterwards, and the next boot logged `Mono:Disabled` and `Mono is disabled`. Running enable
+again, then a reset, worked. The cause is not confirmed. **Write files first and enable the
+runtime last**, and read the banner's `Mono:` field from this port before debugging anything
+that needs Mono.
 
 ### Which UART, and the path that survives a fault `(measured)`
 
@@ -901,7 +954,8 @@ took the runtime down.
 
 Build with `./build.sh --nsh --dualcdc`. NSH, with procfs and therefore `ps`,
 then runs on the **second** Meadow CDC port: `cu.usbmodem<serial>3` beside the
-CLI's `<serial>1`. Open it with pyserial, send `ps\r` and read for about 4 s.
+CLI's `<serial>1`. Without `--nsh`, that port carries the syslog instead; see
+"The second USB CDC port: syslog or NSH". Open it with pyserial, send `ps\r` and read for about 4 s.
 
 - **"Resource busy"** right after a board reset was a transient. Retry after a
   few seconds; `lsof` showed no holder. When `lsof` does show a holder, it is
@@ -1354,6 +1408,55 @@ read in one loop against one clock), shows:
 Decode LCP codes by un-escaping `}x` -> `x ^ 0x20`; the code byte follows
 `ff 03 c0 21`. Two adapters that both report identical byte streams are on the
 same wire.
+
+### Syslog for cell debugging
+
+COM1 belongs to the modem, so read the syslog from the second USB CDC port; see "The second USB
+CDC port: syslog or NSH" under "Console and ports". Check the boot banner for `Mono:Enabled`
+first, because pppd only starts with Mono, and see the runtime-enable trap there.
+
+What the syslog showed during cell work: the kernel's cell config parsing, the PWRKEY pulse,
+pppd start, and every `hcom_pppd.c` syslog line. Meanwhile the COM1 board TX carried only modem
+traffic.
+
+### Exercising the managed cell API `(measured, 2026-10-26)`
+
+`ICellNetworkAdapter` (`Device.NetworkAdapters.Primary<ICellNetworkAdapter>()`)
+offers `FetchGnssAtCmdsOutput(types, timeoutSeconds)`, `GetSignalQuality(t)` and
+`ScanForAvailableNetworks(t)`. The timeouts are counted in **seconds**, although
+one doc comment says milliseconds. How a call works:
+- it calls `meadow_cell_change_state(bit)`, then hcom posts an AT script and sets
+  `CELL_AT_CMD | CELL_PAUSED`;
+- pppd runs the script inside its next `ppp_reconnect`;
+- the ESPCP `NetworkAtCmdEvent` sets the managed state back to Resumed.
+
+So the latency is "time to the next reconnect" plus the script time. GNSS took
+207 s: about 57 s of waiting, then about 150 s of script, which includes
+`PAUSE 120`.
+
+To run a check, build a one-off app: a `Library`, `AssemblyName` `App`,
+`net10.0`, referencing `Meadow.F7.csproj` from the `meadow-3.0` checkout. Deploy
+it with `meadow app run <dir>`, which keeps listening afterwards.
+- **Ship the current `meadow.config.yaml` and `cell.config.yaml` in the app**
+  (`<None ... CopyToPublishDirectory="Always">`), because the deploy deletes
+  every other file in `/meadow0`.
+- Print tagged lines (`GNSSCHECK ...`), and run a background heartbeat thread so
+  that a blocked call can be told apart from a dead runtime.
+- Sniff both UART directions at the same time: the modem's answer decides
+  whether a bad result is the board's fault.
+
+What it showed:
+- **GNSS:** without a GNSS antenna the script runs and the modem answers, but
+  the NMEA is empty (`$GPGGA,,,,,,0`, `$GPRMC,,V`). With a GPS antenna on the
+  BG95 (2026-10-26) the same 209 s run got a 3D fix: `$GPGGA` quality 1 with 9
+  satellites, `$GPGSA` mode 3 with HDOP 0.8, and `$GPRMC` status `A`. The NMEA
+  contains the bench's location, so keep coordinates out of PRs and notes.
+- **Signal quality:** the -9999 result was the modem's own `+CSQ: 99,99`,
+  because the one-shot script runs straight after a hang-up. Reproduced twice.
+- **Syslog quirk:** the first `ppp_reconnect` logs "Cell network has been
+  disconnected, error: 2" about 1 s after pppd starts, before any connection.
+  Every reconnect then logs "error: 3" (timeout) from the malformed disconnect
+  script.
 
 With a SIM, expect IPCP to finish, `ppp0` to get an address and the
 `Connection established` host message. Authentication has to come from
