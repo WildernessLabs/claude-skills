@@ -284,10 +284,12 @@ python3 ~/.claude/skills/embedded-debugger/tools/meadow_ports.py esp_console
 | Role | USB identity (stable) | Names seen (location-derived; will change) | What |
 |---|---|---|---|
 | `meadow_cdc` | `2E6A:0001` "Meadow F7 Micro", serial number = board ID | `cu.usbmodemMeadowApp1`; `cu.usbmodem<serial>1` (2026-10-14) | Meadow USB CDC: HCOM, Meadow CLI, `meadow listen`. **Absent** until the OS runs hcom, and during a reset loop |
+| `meadow_cdc2` | `2E6A:0001`, second node of the same board | `cu.usbmodem<serial>3` (`cu.usbmodem337B317434383`, 2026-10-26) | **Only in a `build.sh --dualcdc` build.** Without `--nsh` it carries the **syslog**; with `--nsh` it is the NSH console. See "The second USB CDC port: syslog or NSH" below |
 | `meadow_dfu` | `0483:DF11` "STM32  BOOTLOADER" (not a serial port; found in `ioreg -p IOUSB`) | n/a | The STM32 ROM bootloader: the board is in DFU mode and Meadow.OS is not running (SWD shows PC in `0x1ff0xxxx`). `flash.sh` over SWD still works |
 | `stlink_vcp` | `0483:374E` "STLINK-V3" | `cu.usbmodem21112203`; `cu.usbmodem21203` (2026-10-14); `cu.usbmodem1203` (2026-10-15) | ST-Link virtual COM port. Was the NuttX syslog on 2026-09; see the caveat below |
 | `espprog_jtag` | `0403:6010` "Dual RS232-HS" (FTDI FT2232H), interface A | `cu.usbserial-100`; `cu.usbserial-21112100`; `cu.usbserial-21100`; `cu.usbserial-1100` | ESP-Prog JTAG; claimed by OpenOCD over libusb |
 | `esp_console` | `0403:6010`, interface B (the second node of the pair) | `cu.usbserial-101`; `cu.usbserial-21112101`; `cu.usbserial-21101`; `cu.usbserial-1101` | ESP32 console direct, 115200 8N1, and the `+++` control markers |
+| `uart_sniffer1`, `uart_sniffer2` | `1A86:55D4` "USB Single Serial" (WCH CH343); two on 2026-10-26, serials `559C000220` and `559B012424` | `cu.usbserial-559C0002201`, `cu.usbserial-559B0124241` (2026-10-26) | **Optional, wired by the user on request.** RX tapped onto one line of a board UART. On 2026-10-26: `...559C...` on the board TX into the cell modem (mikroBUS 1) and `...559B...` on the modem TX. Passive; see "Cell modem" below |
 
 **SWD "Examination failed" recovery** `(confirmed by the user, 2026-10-16)`:
 OpenOCD sometimes reports `Error: [stm32f7x.cpu] Examination failed` and keeps
@@ -364,6 +366,58 @@ covered in `meadow-esp32-trace.md`.
 Line format: `[ seconds.micros ] [ task ] message`. The bracketed number is the
 NuttX task, so `[5]`, `[10]` and `[11]` above are three different tasks.
 
+### The second USB CDC port: syslog or NSH `(per the maintainer; measured 2026-10-18 and 2026-10-26)`
+
+`build.sh --dualcdc` gives the board a **second USB CDC port** (`meadow_cdc2`,
+`cu.usbmodem<serial>3`, for example `cu.usbmodem337B317434383`) beside the HCOM/CLI port
+(`<serial>1`). The NuttX config has `CONFIG_USBDEV_COMPOSITE=y` and `CONFIG_CDCACM_COMPOSITE=y`.
+What the second port carries depends on `--nsh`:
+
+| Build | Second CDC port carries |
+|---|---|
+| `--dualcdc --nsh` | The NSH console (`ps`, procfs); see "Thread names, `ps`..." below |
+| `--dualcdc` without `--nsh` | **The NuttX syslog.** This is the way to get the syslog when COM1 (USART1) is needed for something else, such as the cell modem on mikroBUS 1 |
+
+When changing these options, do a full build (`build.sh --clean --force --dualcdc`), as the maintainer instructed; a plain incremental build was not tried.
+
+**Turning the syslog output on.** Use `meadow trace level 2`, or put this in
+`meadow.config.yaml`:
+
+```yaml
+InternalDebug:
+    TraceLevel: 2
+```
+
+**Leave `Uart1Use` out of the file**, or the output goes to COM1 instead. On 2026-10-26 I also
+kept the word out of comments, to be safe. The boot banner still says `to:none (ramlog)` while
+the port is carrying the syslog.
+
+**Capturing across a reset** `(measured, 2026-10-26)`:
+- The node disappears during a reset, so opening it before the reset fails. Start the reset
+  (SWD `reset run`), poll for the node, open it as soon as it exists, and keep reading.
+- The port reappeared about 0.3 s after the reset. The read still began at the boot's
+  `0.067 s` lines (`meadow_upd_initialize`), because the syslog is held in the RAM log.
+- 115200 in pyserial is fine; the baud rate is ignored on a CDC port.
+
+```python
+ser = None
+subprocess.run([...openocd... "init; reset run; sleep 500; shutdown"])
+while time.time() - t0 < seconds:
+    if ser is None:
+        if os.path.exists(cdc2):
+            try: ser = serial.Serial(cdc2, 115200, timeout=0)
+            except Exception: pass
+        time.sleep(0.01); continue
+    log += ser.read(4096)
+```
+
+**`meadow runtime enable` did not survive a following `meadow file write`, twice**
+`(measured, 2026-10-26)`. Both times enable reported ENABLED, a config file was written
+afterwards, and the next boot logged `Mono:Disabled` and `Mono is disabled`. Running enable
+again, then a reset, worked. The cause is not confirmed. **Write files first and enable the
+runtime last**, and read the banner's `Mono:` field from this port before debugging anything
+that needs Mono.
+
 ### Which UART, and the path that survives a fault `(measured)`
 
 **USART1 is the console.** `CONFIG_USART1_SERIAL_CONSOLE=y` in `nuttx/.config`
@@ -380,6 +434,10 @@ exactly two are running:
 | USART1 `0x40011000` | `0x2D` | 938 | 115200 | NuttX console / syslog -> ST-Link VCP |
 | UART5 `0x40005000` | `0x2D` | 469 | 115200 | link to the ESP32 |
 | USART2/3/6, UART4/7/8 | `0x00` | - | - | off |
+
+With a cell modem on mikroBUS 1, USART1 (COM1) carries the modem instead. In
+that case `InternalDebug` must be removed from `meadow.config.yaml`, and the
+console termios must not be left on the modem tty; see "Cell modem" below.
 
 The **polled** write path is `arm_lowputc()` -- see `stm32-family.md` for the
 busy-wait loop. It is the one to report through from a fault handler, because
@@ -807,6 +865,17 @@ attempting to attach"). Reliable sequence: flash and verify the OS, `reset run`,
 wait for the CLI, `meadow runtime disable`, then `firmware write runtime`, then
 `meadow device reset`.
 
+**Better: disable the runtime BEFORE flashing the OS** `(maintainer advice,
+2026-10-25; on this bench the Meadow USB port often did not enumerate after a
+flash made with the runtime enabled, and the first runtime write failed with
+"Cannot find port")`. When deploying the OS and the runtime together, run
+`meadow runtime disable` first, while the old OS is still running, and only
+then flash the OS or write the runtime. Full sequence: `meadow runtime disable`,
+flash the OS, `reset run` over SWD, check the `/dev/tty.usbmodem<serial>`
+port exists, `meadow firmware write runtime`, `meadow file delete
+Meadow.OS.Runtime.bin`, `meadow runtime enable`, then `meadow device info` to
+confirm the OS and runtime versions match.
+
 **When managed results are numerically wrong, suspect the Thumb-2 JIT encoder**
 `(measured, 2026-10-15)`. The runtime's `src/mono/mono/arch/arm/thumb-codegen.h`
 is hand-written for the Meadow port; register shifts were wrong (fixed in
@@ -885,7 +954,8 @@ took the runtime down.
 
 Build with `./build.sh --nsh --dualcdc`. NSH, with procfs and therefore `ps`,
 then runs on the **second** Meadow CDC port: `cu.usbmodem<serial>3` beside the
-CLI's `<serial>1`. Open it with pyserial, send `ps\r` and read for about 4 s.
+CLI's `<serial>1`. Without `--nsh`, that port carries the syslog instead; see
+"The second USB CDC port: syslog or NSH". Open it with pyserial, send `ps\r` and read for about 4 s.
 
 - **"Resource busy"** right after a board reset was a transient. Retry after a
   few seconds; `lsof` showed no holder. When `lsof` does show a holder, it is
@@ -1209,7 +1279,286 @@ Measured for Blinky: PC6/PC7/PC9 as outputs, and ODR bits 6/7/9 stepping
 R -> G -> B -> off. That separates "the app thinks it is toggling" from "the pin
 toggles", and is independent of whether anyone is watching the LED.
 
+## Cell modem (BG95-M3) over PPP `(measured, 2026-10-26)`
+
+> Since 2026-10-27 the cell code uses CMUX; see "Since CMUX" at the end of this section. For
+> network and APN questions, talk to the modem directly ("Talking to the modem directly").
+
+Cell support is built only when `CONFIG_MEADOW_CELL_INCLUDE_IN_BUILD=y`. It was
+added on the Rebase `BuildCellCode` branch; the plan and issue list are in
+`OS/CellPlan.md`. The pieces:
+- the kernel powers the modem on at boot (`hcom_nx_config_turn_on_the_cell_module`);
+- hcom starts a `CellPPPD` thread (`apps/system/hcom/cell/hcom_pppd.c`);
+- that thread runs NuttX `netutils/pppd`, which runs `chat` scripts on the modem
+  UART, then PPP over `/dev/tun` (`ppp0`).
+
+**pppd only starts if Mono started OK.** "Mono is disabled" on the host output
+means no cell attempt at all. Once, `meadow runtime enable` reported ENABLED
+after a deploy and the next boot still said Mono was disabled. Running it again
+worked. Check for `Meadow successfully started MONO` before debugging cell.
+
+### Bench setup and config
+
+- **Modem:** BG95-M3 click board on **mikroBUS 1** = **COM1** = USART1 =
+  `/dev/ttyS0`, enable (PWRKEY) pin **A3**, with a small antenna. No SIM was
+  available on 2026-10-26.
+- **`meadow.config.yaml`:** `Network: DefaultInterface: Cell`, plus
+  `ReservedPins: ...;B15;B14;A3` (the COM1 pins and the enable pin). The
+  interface name is `Cell` (`MEADOW_IFT_CELL_NAME`).
+- **`/meadow0/cell.config.yaml`:**
+  ```yaml
+  Settings:
+      APN: internet
+      Module: BG95M3
+      Interface: COM1
+      EnablePin: A3
+  ```
+  Other optional keys: `User`, `Password`, `Operator`, `Mode`, `Timeout` (the
+  chat timeout, default 30) and `ScanMode`, which is deprecated.
+- **COM1 is shared with the debug/trace output.** It must be silenced for cell:
+  **remove the whole `InternalDebug` section** from `meadow.config.yaml`. Legacy
+  was designed to work this way. Verified by holding `stlink_vcp` open across a
+  reset:
+  - with the section: 8191 bytes of boot output;
+  - without it: 0 bytes in 60 s, and the CDC port dropping and re-enumerating
+    proved the board did reboot.
+- **Back up `meadow.config.yaml` before changing it, and restore it after**
+  (`meadow file read /meadow0/meadow.config.yaml <local>`; the bare name timed
+  out). With `DefaultInterface: Cell` the board does not use WiFi.
+  `wifi.config.yaml` is one-shot and gets deleted, so never print it.
+
+### Watching it
+
+- **Host output** (`meadow listen -t`) carries the `HCOM_CELL_DEBUG_LOGS`
+  messages:
+  - `Cell connect script failed, retrying... Script:`, then the script,
+    `Response:` and the modem's captured output;
+  - on link-up, `Connection established successfully! IP address ...` and the
+    DNS servers.
+
+  The `ESPCP_CELL_*` events (connecting, connected, retry exceeded) go to
+  managed code, not to the host.
+- **The kernel syslog** (power-on, cell settings) is in the RAM log; read it
+  over SWD.
+- **A sniffer on the modem UART is the decisive instrument** when the chat
+  script fails. The user can wire a USB-serial adapter (`uart_sniffer1`, `uart_sniffer2` roles)
+  onto the modem lines. Use it **receive-only**, 115200 8N1:
+  - **Do not transmit while the board drives the modem's RX.** To talk to the
+    modem, take the board off the line first: see "Talking to the modem
+    directly" below.
+  - **One channel sees one direction.** Ask which line it is on. The board TX
+    (modem RX) shows the AT commands and the board's PPP frames. The modem TX
+    shows the echo, `OK`, the IMEI, `CONNECT` and `RDY`/`APP RDY`.
+  - **Capture passively with host timestamps.** Open the port, flush, then read
+    `(t, bytes)` chunks and write them with `%r`, so `\r`, `\n` and binary PPP
+    bytes stay visible. The board retries every 30-60 s, so 150-300 s covers
+    two or three attempts without a reset.
+  - **To test the wiring:** just listen. `AT+CFUN=1,1` appears within about a
+    minute. To identify the modem (`ATI` -> `Quectel`, `BG95-M3`, revision,
+    `OK`), hold the board in reset or remove its TX link first, then connect
+    the adapter's TX and a common ground.
+- **Reading PPP bytes:** frames are `0x7E`-delimited and use `}` escapes.
+  `~\xff}#\xc0!` is LCP (`ff 03 c0 21`); `~\x80!` is IPCP (`80 21`).
+  Configure-Requests repeating every 6 s mean the peer is not answering.
+
+### Traps found
+
+- **The console termios breaks the modem link.** `/dev/ttyS0` is the NuttX
+  console, which defaults to `ECHO | ICANON | ISIG`, `ICRNL` and
+  `OPOST | ONLCR` (`drivers/serial/serial.c`). The sniffer showed the board
+  sending the modem's output straight back to it: `AT+CFUN=1,1`, `OK`, `RDY`,
+  each `\r` coming back as `\r\n`. The echo happens when chat reads the data
+  after a `PAUSE`.
+  - The echoed `AT+CFUN=1,1` reset the modem a second time.
+  - Line mode left chat with only `AT+CFUN=1,1`, so `OK` was never matched.
+  - The `Response:` showing just the echoed command is the signature.
+  - Fix: `hcom_pppd_set_tty_raw()` (`cfmakeraw` + `tcsetattr`) before
+    `pppd()`. Legacy never hit this because it had no console
+    (`# CONFIG_DEV_CONSOLE is not set`).
+- **BG95 power-on pulses PWRKEY on every boot**, without checking the reset
+  reason (the EG21 path does). An SWD or soft reset leaves the modem powered,
+  so each reset can toggle it off and on. Keep this in mind when the modem
+  goes silent, but it was not the cause of the echo failure (see Wrong turns).
+- **The disconnect script is malformed** (`AT+CFUN=1,1 PAUSE 10 OK "" ATZ OK`):
+  chat pairs are expect/send, so it waits 30 s for the modem to *say*
+  `AT+CFUN=1,1`. That is the 30 s gap after `+++` / `ATE1` on every reconnect.
+
+### What a healthy no-SIM attempt looks like on the board TX
+
+The connect script ran end to end with the raw-mode fix:
+
+```
++++                       (ppp_reconnect)
+ATE1
+  ... 30 s (disconnect script timeout, above)
+AT+CFUN=1,1               then PAUSE 15
+AT+CMEE=2 / AT+GSN / AT+CGDCONT=1,"IP","<apn>" / AT+QCSQ / AT+CSQ / AT+COPS=0   (3 s apart)
+ATD*99#                   modem answers CONNECT
+~\xff}#\xc0!...~          LCP, then IPCP Configure-Requests every 6 s
+  ... no IPCP reply without a SIM -> timeout after about 30 s -> +++ again
+```
+
+The modem side, captured with a second adapter on the modem TX line (two ports
+read in one loop against one clock), shows:
+- `OK` to every command, the IMEI to `AT+GSN`, and `CONNECT 150000000`;
+- LCP: the modem's Configure-Request offers CHAP-MD5 (option `03 05 c2 23 05`).
+  The board sends Configure-Reject (code 4) for it and Configure-Ack (code 2)
+  for the rest, and the modem re-requests without CHAP;
+- the board's IPCP Configure-Request;
+- **without a SIM, the modem then sends LCP Terminate-Request (code 5) and
+  `NO CARRIER`**. That is normal: it cannot activate a PDP context. It also
+  sends a harmless Discard-Request (code 11).
+
+Decode LCP codes by un-escaping `}x` -> `x ^ 0x20`; the code byte follows
+`ff 03 c0 21`. Two adapters that both report identical byte streams are on the
+same wire.
+
+### Syslog for cell debugging
+
+COM1 belongs to the modem, so read the syslog from the second USB CDC port; see "The second USB
+CDC port: syslog or NSH" under "Console and ports". Check the boot banner for `Mono:Enabled`
+first, because pppd only starts with Mono, and see the runtime-enable trap there.
+
+What the syslog showed during cell work: the kernel's cell config parsing, the PWRKEY pulse,
+pppd start, and every `hcom_pppd.c` syslog line. Meanwhile the COM1 board TX carried only modem
+traffic.
+
+### Exercising the managed cell API `(measured, 2026-10-26)`
+
+`ICellNetworkAdapter` (`Device.NetworkAdapters.Primary<ICellNetworkAdapter>()`)
+offers `FetchGnssAtCmdsOutput(types, timeoutSeconds)`, `GetSignalQuality(t)` and
+`ScanForAvailableNetworks(t)`. The timeouts are counted in **seconds**, although
+one doc comment says milliseconds. How a call works:
+- it calls `meadow_cell_change_state(bit)`, then hcom posts an AT script and sets
+  `CELL_AT_CMD | CELL_PAUSED`;
+- pppd runs the script inside its next `ppp_reconnect`;
+- the ESPCP `NetworkAtCmdEvent` sets the managed state back to Resumed.
+
+So the latency is "time to the next reconnect" plus the script time. GNSS took
+207 s: about 57 s of waiting, then about 150 s of script, which includes
+`PAUSE 120`.
+
+To run a check, build a one-off app: a `Library`, `AssemblyName` `App`,
+`net10.0`, referencing `Meadow.F7.csproj` from the `meadow-3.0` checkout. Deploy
+it with `meadow app run <dir>`, which keeps listening afterwards.
+- **Ship the current `meadow.config.yaml` and `cell.config.yaml` in the app**
+  (`<None ... CopyToPublishDirectory="Always">`), because the deploy deletes
+  every other file in `/meadow0`.
+- Print tagged lines (`GNSSCHECK ...`), and run a background heartbeat thread so
+  that a blocked call can be told apart from a dead runtime.
+- Sniff both UART directions at the same time: the modem's answer decides
+  whether a bad result is the board's fault.
+
+What it showed:
+- **GNSS:** without a GNSS antenna the script runs and the modem answers, but
+  the NMEA is empty (`$GPGGA,,,,,,0`, `$GPRMC,,V`). With a GPS antenna on the
+  BG95 (2026-10-26) the same 209 s run got a 3D fix: `$GPGGA` quality 1 with 9
+  satellites, `$GPGSA` mode 3 with HDOP 0.8, and `$GPRMC` status `A`. The NMEA
+  contains the bench's location, so keep coordinates out of PRs and notes.
+- **Signal quality:** the -9999 result was the modem's own `+CSQ: 99,99`,
+  because the one-shot script runs straight after a hang-up. Reproduced twice.
+- **Syslog quirk:** the first `ppp_reconnect` logs "Cell network has been
+  disconnected, error: 2" about 1 s after pppd starts, before any connection.
+  Every reconnect then logs "error: 3" (timeout) from the malformed disconnect
+  script.
+
+With a SIM, expect IPCP to finish, `ppp0` to get an address and the
+`Connection established` host message. Authentication has to come from
+`AT+CGAUTH` in the connect script, because the board rejects CHAP.
+
+### Talking to the modem directly `(measured, 2026-10-28)`
+
+For connection and network questions (APN, registration, network type, reject causes), drive the
+modem yourself from a USB-serial adapter instead of building firmware. Each command answers in
+seconds, against about 25 minutes for a build, deploy and test run.
+
+- **Wiring (ask the user; it changes):** on 2026-10-28 the WCH adapter `...559C...` had its TX on
+  the modem's RX (the line the Meadow's PB14 also drives) and its RX on the modem's TX, so it talks
+  to the modem full duplex. `...559B...` was a receive-only monitor, first of the modem TX, later
+  (afternoon) of the modem RX (the board's TX). Verify before trusting it: with the board off the
+  line, the modem should echo `AT` and answer `OK`; identify which adapter sees which direction from
+  the content (the modem side carries `OK` replies; the board side carries only commands).
+- **Get the Meadow off the line, but keep the modem powered:**
+  1. Let the board boot normally and run for a minute, so that hcom has powered the modem and PA3
+     (the BG95 power key, `A3`) is a driven-low output.
+  2. Halt the running core, then make only COM1 TX (PB14) an input:
+     `openocd ... -c init -c halt -c "mmw 0x40020400 0 0x30000000" -c shutdown`.
+  3. Check: GPIOA MODER (0x40020000) bits 7:6 = 01 (PA3 output) and GPIOB MODER bits 29:28 = 00.
+     The core stays halted after OpenOCD exits, and both watchdogs are frozen while halted
+     (DBGMCU 0xE0042008 = 0x1800).
+- **Never halt at the reset vector for this** (`reset halt`). PA3 is then a floating input that
+  reads high, which holds the power key down: the modem restarts every 4 s (`RDY`, then a 0x00
+  1.5 s later). The same happened when the board had rebooted unnoticed before a halt. Read PA3's
+  MODER after halting.
+- **Leave CMUX first:** the modem is still multiplexed. Send the close-down frame
+  `F9 03 EF 05 C3 01 F2 F9`; the modem answers with a frame, then plain AT works.
+- **Restore:** `reset run` over SWD. The kernel pulses the power key and hcom restarts CMUX
+  (`RDY`, `APP RDY`, then CMUX flags on the line within 10 s). The connect script sends
+  `AT+COPS=0`, which undoes a manual operator selection.
+- **Tool:** `tools/meadow_modem_at.py <log> <item>...`. Each item is an AT command, `@cld` (the
+  CMUX close-down) or `+N` (wait N s, sending nothing). It prints the replies and appends a
+  timestamped log. Quote items that contain `?` or `"` in zsh.
+- **Traps:**
+  - **Any character sent aborts a running `AT+COPS`.** A status query sent during a manual
+    selection or a scan cut it short, and the lone `OK` looked like success. Send nothing until the
+    command finishes (up to 180 s, sometimes longer).
+  - **`AT+COPS=?` hung the BG95** (firmware `BG95M3LAR02A03_01.014.01.014`): no output and no echo
+    for over 8 minutes, until a Meadow reset re-powered it. The same kind of whole-UART silence as
+    the GNSS stall (issue #921).
+  - `AT+CEREG=3` (reject cause in the URC) is not supported; use `AT+CEREG=2`.
+  - Straight after `RDY`, `AT+QGMR` reported `...01.014.00.000`; once up it reports
+    `...01.014.01.014`. Same modem.
+- **Useful reads:** `AT+QCFG="nwscanmode"`, `"iotopmode"`, `"nwscanseq"`, `"band"`, `AT+COPS?`,
+  `AT+CREG?` (GSM), `AT+CEREG?` (LTE), `AT+QNWINFO`, `AT+QCSQ`, `AT+CGDCONT?`, `AT+QICSGP=1`,
+  `AT+CGATT?`, `AT+CGACT?`, `AT+CGCONTRDP=1`, `AT+CEDRXRDP`, `AT+QGPSCFG="priority"`.
+- **Data budget:** a context activation or registration uses next to no data, but ask before
+  anything that moves real traffic (the EE SIM is limited).
+
+### Since CMUX (2026-10-27)
+
+Much of this section describes the pre-CMUX design (`hcom_pppd.c`, AT scripts run inside pppd
+reconnects). The current design is in `Documentation/Cell.md`: CMUX on COM1, stock pppd on DLCI 1,
+AT requests on DLCI 2 in the CellAT thread (`apps/system/hcom/cell/hcom_cell.c`). On the wire every
+byte is inside a `0xF9` CMUX frame: address `(dlci << 2) | 3`, then the control byte, a length byte
+`(len << 1) | 1`, the payload and the FCS. Decode the frames before looking for AT text or PPP.
+GNSS and data cannot run together on the BG95; see issue #921.
+
+**Wire analysis that worked (2026-10-28, full-size packets, PR #923):**
+- Decode in layers: CMUX frames per direction, join the DLCI 1 payloads, split PPP frames on `0x7E`,
+  un-escape `}x` -> `x ^ 0x20`, strip `ff 03`, then IP and TCP (seq/ack relative to the SYN, window,
+  flags, payload length). That showed 1400-byte packets the board never ACKed, out-of-order drops,
+  and an upload whose TCP sequence advanced with no data segments on the wire.
+- **The WCH sniffers drop bytes** (captured lengths 10-30% short of the IP total length, even for
+  packets the board accepted). Trust the IP header and the timestamps, not captured byte counts or
+  payload content.
+- **Burst timing is the strongest clue for a stalled writer:** group a direction's reads into bursts
+  (gap > 150 ms) and print size and spacing. Uploads arriving as exactly 379 bytes every 1.50 s
+  pointed straight at a writer stalling on a timeout behind a small buffer (cmux.c writing whole
+  frames to the 252-byte USART1 TX buffer with one non-blocking `write()`).
+- To exercise large packets use `tests/managed/CellTests` `cell.http_large` (httpbin.org, about
+  20 KB); `cell.http_get`'s 577-byte page never fills a segment.
+
+**A thread starving the cell link (2026-10-28):** the connected event came 135 s after the link was
+up. Sampling 20 PCs (halt, `reg pc`, resume, 150 ms apart) gave 20/20 in `select`/`pty_poll`/
+`pipecommon_poll` (resolve flash PCs against `nuttx.elf`; user-space ones against `nuttx_user.elf`).
+The running task, read 12 times with GDB from `((struct tcb_s *)g_readytorun.head)->name`, was
+`hcom_main`, priority 100, `flags & 3 == 1`: a **pthread**, which takes its parent task's name. It
+was the native suite's leftover CMUX thread spinning on end of file after the test closed its ptys.
+Pthread names lie about which code is running; check the flags and the priority.
+
+**Native `cell` suite and the managed app:** the deployed CellTests app runs at boot and its GNSS
+request takes the radio for about 95 s. Run `meadow developer -p 20 -v 1` after the app has
+finished, or the live DNS check fails.
+
 ## Wrong turns
+
+- **Cell, 2026-10-26: "the BG95 PWRKEY toggle turned the modem off" was the
+  first explanation for chat getting only `AT+CFUN=1,1` back.** A second reset,
+  which should have toggled it back on, gave exactly the same result, which
+  ruled it out as the main cause. The sniffer then showed the console echo
+  described in "Cell modem" above. Lesson: the captured `Response:` is the
+  modem's output **after the tty layer**, so a tty-mode problem looks like a
+  modem problem until you see the wire.
 
 - **Turning on `CONFIG_DEBUG_FEATURES` alone used to hang the board**, silently,
   between two `showprogress` characters. The cause is recorded in a comment in
