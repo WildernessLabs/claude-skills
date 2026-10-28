@@ -1281,6 +1281,9 @@ toggles", and is independent of whether anyone is watching the LED.
 
 ## Cell modem (BG95-M3) over PPP `(measured, 2026-10-26)`
 
+> Since 2026-10-27 the cell code uses CMUX; see "Since CMUX" at the end of this section. For
+> network and APN questions, talk to the modem directly ("Talking to the modem directly").
+
 Cell support is built only when `CONFIG_MEADOW_CELL_INCLUDE_IN_BUILD=y`. It was
 added on the Rebase `BuildCellCode` branch; the plan and issue list are in
 `OS/CellPlan.md`. The pieces:
@@ -1340,8 +1343,9 @@ worked. Check for `Meadow successfully started MONO` before debugging cell.
 - **A sniffer on the modem UART is the decisive instrument** when the chat
   script fails. The user can wire a USB-serial adapter (`uart_sniffer1`, `uart_sniffer2` roles)
   onto the modem lines. Use it **receive-only**, 115200 8N1:
-  - **Never connect the adapter's TX while the board is attached:** the board
-    already drives the modem's RX.
+  - **Do not transmit while the board drives the modem's RX.** To talk to the
+    modem, take the board off the line first: see "Talking to the modem
+    directly" below.
   - **One channel sees one direction.** Ask which line it is on. The board TX
     (modem RX) shows the AT commands and the board's PPP frames. The modem TX
     shows the echo, `OK`, the IMEI, `CONNECT` and `RDY`/`APP RDY`.
@@ -1461,6 +1465,90 @@ What it showed:
 With a SIM, expect IPCP to finish, `ppp0` to get an address and the
 `Connection established` host message. Authentication has to come from
 `AT+CGAUTH` in the connect script, because the board rejects CHAP.
+
+### Talking to the modem directly `(measured, 2026-10-28)`
+
+For connection and network questions (APN, registration, network type, reject causes), drive the
+modem yourself from a USB-serial adapter instead of building firmware. Each command answers in
+seconds, against about 25 minutes for a build, deploy and test run.
+
+- **Wiring (ask the user; it changes):** on 2026-10-28 the WCH adapter `...559C...` had its TX on
+  the modem's RX (the line the Meadow's PB14 also drives) and its RX on the modem's TX, so it talks
+  to the modem full duplex. `...559B...` was a receive-only monitor, first of the modem TX, later
+  (afternoon) of the modem RX (the board's TX). Verify before trusting it: with the board off the
+  line, the modem should echo `AT` and answer `OK`; identify which adapter sees which direction from
+  the content (the modem side carries `OK` replies; the board side carries only commands).
+- **Get the Meadow off the line, but keep the modem powered:**
+  1. Let the board boot normally and run for a minute, so that hcom has powered the modem and PA3
+     (the BG95 power key, `A3`) is a driven-low output.
+  2. Halt the running core, then make only COM1 TX (PB14) an input:
+     `openocd ... -c init -c halt -c "mmw 0x40020400 0 0x30000000" -c shutdown`.
+  3. Check: GPIOA MODER (0x40020000) bits 7:6 = 01 (PA3 output) and GPIOB MODER bits 29:28 = 00.
+     The core stays halted after OpenOCD exits, and both watchdogs are frozen while halted
+     (DBGMCU 0xE0042008 = 0x1800).
+- **Never halt at the reset vector for this** (`reset halt`). PA3 is then a floating input that
+  reads high, which holds the power key down: the modem restarts every 4 s (`RDY`, then a 0x00
+  1.5 s later). The same happened when the board had rebooted unnoticed before a halt. Read PA3's
+  MODER after halting.
+- **Leave CMUX first:** the modem is still multiplexed. Send the close-down frame
+  `F9 03 EF 05 C3 01 F2 F9`; the modem answers with a frame, then plain AT works.
+- **Restore:** `reset run` over SWD. The kernel pulses the power key and hcom restarts CMUX
+  (`RDY`, `APP RDY`, then CMUX flags on the line within 10 s). The connect script sends
+  `AT+COPS=0`, which undoes a manual operator selection.
+- **Tool:** `tools/meadow_modem_at.py <log> <item>...`. Each item is an AT command, `@cld` (the
+  CMUX close-down) or `+N` (wait N s, sending nothing). It prints the replies and appends a
+  timestamped log. Quote items that contain `?` or `"` in zsh.
+- **Traps:**
+  - **Any character sent aborts a running `AT+COPS`.** A status query sent during a manual
+    selection or a scan cut it short, and the lone `OK` looked like success. Send nothing until the
+    command finishes (up to 180 s, sometimes longer).
+  - **`AT+COPS=?` hung the BG95** (firmware `BG95M3LAR02A03_01.014.01.014`): no output and no echo
+    for over 8 minutes, until a Meadow reset re-powered it. The same kind of whole-UART silence as
+    the GNSS stall (issue #921).
+  - `AT+CEREG=3` (reject cause in the URC) is not supported; use `AT+CEREG=2`.
+  - Straight after `RDY`, `AT+QGMR` reported `...01.014.00.000`; once up it reports
+    `...01.014.01.014`. Same modem.
+- **Useful reads:** `AT+QCFG="nwscanmode"`, `"iotopmode"`, `"nwscanseq"`, `"band"`, `AT+COPS?`,
+  `AT+CREG?` (GSM), `AT+CEREG?` (LTE), `AT+QNWINFO`, `AT+QCSQ`, `AT+CGDCONT?`, `AT+QICSGP=1`,
+  `AT+CGATT?`, `AT+CGACT?`, `AT+CGCONTRDP=1`, `AT+CEDRXRDP`, `AT+QGPSCFG="priority"`.
+- **Data budget:** a context activation or registration uses next to no data, but ask before
+  anything that moves real traffic (the EE SIM is limited).
+
+### Since CMUX (2026-10-27)
+
+Much of this section describes the pre-CMUX design (`hcom_pppd.c`, AT scripts run inside pppd
+reconnects). The current design is in `Documentation/Cell.md`: CMUX on COM1, stock pppd on DLCI 1,
+AT requests on DLCI 2 in the CellAT thread (`apps/system/hcom/cell/hcom_cell.c`). On the wire every
+byte is inside a `0xF9` CMUX frame: address `(dlci << 2) | 3`, then the control byte, a length byte
+`(len << 1) | 1`, the payload and the FCS. Decode the frames before looking for AT text or PPP.
+GNSS and data cannot run together on the BG95; see issue #921.
+
+**Wire analysis that worked (2026-10-28, full-size packets, PR #923):**
+- Decode in layers: CMUX frames per direction, join the DLCI 1 payloads, split PPP frames on `0x7E`,
+  un-escape `}x` -> `x ^ 0x20`, strip `ff 03`, then IP and TCP (seq/ack relative to the SYN, window,
+  flags, payload length). That showed 1400-byte packets the board never ACKed, out-of-order drops,
+  and an upload whose TCP sequence advanced with no data segments on the wire.
+- **The WCH sniffers drop bytes** (captured lengths 10-30% short of the IP total length, even for
+  packets the board accepted). Trust the IP header and the timestamps, not captured byte counts or
+  payload content.
+- **Burst timing is the strongest clue for a stalled writer:** group a direction's reads into bursts
+  (gap > 150 ms) and print size and spacing. Uploads arriving as exactly 379 bytes every 1.50 s
+  pointed straight at a writer stalling on a timeout behind a small buffer (cmux.c writing whole
+  frames to the 252-byte USART1 TX buffer with one non-blocking `write()`).
+- To exercise large packets use `tests/managed/CellTests` `cell.http_large` (httpbin.org, about
+  20 KB); `cell.http_get`'s 577-byte page never fills a segment.
+
+**A thread starving the cell link (2026-10-28):** the connected event came 135 s after the link was
+up. Sampling 20 PCs (halt, `reg pc`, resume, 150 ms apart) gave 20/20 in `select`/`pty_poll`/
+`pipecommon_poll` (resolve flash PCs against `nuttx.elf`; user-space ones against `nuttx_user.elf`).
+The running task, read 12 times with GDB from `((struct tcb_s *)g_readytorun.head)->name`, was
+`hcom_main`, priority 100, `flags & 3 == 1`: a **pthread**, which takes its parent task's name. It
+was the native suite's leftover CMUX thread spinning on end of file after the test closed its ptys.
+Pthread names lie about which code is running; check the flags and the priority.
+
+**Native `cell` suite and the managed app:** the deployed CellTests app runs at boot and its GNSS
+request takes the radio for about 95 s. Run `meadow developer -p 20 -v 1` after the app has
+finished, or the live DNS check fails.
 
 ## Wrong turns
 

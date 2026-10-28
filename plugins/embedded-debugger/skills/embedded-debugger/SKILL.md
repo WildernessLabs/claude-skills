@@ -427,5 +427,8 @@ directory that disappears with the session.
 - `tools/meadow_ports.py` - finds the Meadow bench ports (Meadow CDC, ST-Link
   VCP, ESP-Prog JTAG and console) by USB vendor/product ID, because the node
   names change when the USB layout does
+- `tools/meadow_modem_at.py` - sends AT commands to the Meadow's cell modem through a USB-serial
+  adapter wired to its UART and logs the replies (see "Talking to the modem directly" in
+  `targets/meadow.md`)
 - `tools/meadow_esp32_log.py` - collapses a Meadow ESP32 capture into one line
   per message with decoded payloads, and summarises the control markers

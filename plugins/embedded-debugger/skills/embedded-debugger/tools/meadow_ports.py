@@ -104,8 +104,8 @@ DESCRIPTIONS = {
     "espprog_jtag": "ESP-Prog channel A (JTAG; claimed by OpenOCD)",
     "esp_console": "ESP-Prog channel B (ESP32 console and control markers)",
     "espprog_ambiguous": "more than one ESP-Prog attached; pick by location",
-    "uart_sniffer1": "WCH CH343 adapter tapped onto a board UART (RX only); ask which line it is on",
-    "uart_sniffer2": "second WCH CH343 adapter (RX only); one per UART direction",
+    "uart_sniffer1": "WCH CH343 adapter on a board UART line; usually RX only, may also have TX wired to the cell modem; ask the user",
+    "uart_sniffer2": "second WCH CH343 adapter; one per UART direction, or one full duplex to the modem; ask the user",
 }
 
 
