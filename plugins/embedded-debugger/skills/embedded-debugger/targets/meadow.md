@@ -597,6 +597,27 @@ no such thing as restarting only the application processor. Any ESP32 state
 being accumulated is lost when the STM32 is reset, and an ESP32 GDB session
 will lose its target.
 
+**Halting the STM32 mid-exchange can wedge the espcp thread for good**
+`(measured, 2026-11-02, Issue472)`. Hardware breakpoints at the entry of
+`espcp_core_dump_thread` and then `espcp_generate_core_dump_file` (each halt a
+few seconds) left `g_core_dump_in_progress` at 1 for 4+ minutes; the same
+build with no breakpoints cleared it within 20 s. The likely mechanism: the
+ESP32's `+++SIR` ready signal (UART) arrives while the core is halted and is
+lost, and `espcp_spi_interface_lock()` waits for it with no timeout.
+**Mechanism measured** `(2026-11-02, Issue469)`: an `hbreak` on
+`espcp_signal_spi_ready` at boot halted the STM32 on the first `+++SIR`; the
+ESP32 console showed `+++SIR`/`+++MW` sent 200 ms later, during the halt, and
+then nothing for 50 s. The STM32 never saw them. Once the ESP32's SPI interface
+is up it sends `+++SIR` only after setting up a transaction (no periodic
+resend; `SpiTransportProvider::SynchronisationTask` waits with
+`portMAX_DELAY`), so one lost signal leaves both sides waiting. With the #469
+bounded wait the espcp thread logs "no SPI ready signal ... 5000 ms" and fails
+each message, but the link does not recover until a reset. To prove
+an espcp code path ran, arm **one** `hbreak` at the end of the path (after the
+last ESP32 round trip), or read state over SWD with `init; mdb ...`, which
+does not halt the core. A stuck flag after a breakpoint session proves nothing
+about the code.
+
 A breakpoint anywhere near the link therefore changes the thing being measured.
 Prefer, in order: log rather than halt; halt the **master** first so the slave
 goes quiet cleanly; or use the after-the-fact route in
