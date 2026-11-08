@@ -35,6 +35,20 @@ openocd -f interface/ftdi/esp_ftdi.cfg -f board/esp-wroom-32.cfg
 `board/esp-wroom-32.cfg` prints a deprecation warning and works. Both TAPs are
 found (`esp32.tap0`/`tap1`, IDCODE `0x120034e5`) and both cores examined.
 
+### esptool over channel B `(measured 2026-11-06, esptool 5.3.1)`
+
+- **Writes at 460800 are reliable**, because esptool verifies a hash of every
+  region it writes (`write-flash @flash_args`, about 26 s for a 1.7 MB app).
+- **Reads at 460800 fail.** `read-flash 0x3c0000 0x40000 out.bin` stops with
+  `Corrupt data, expected 0x1000 bytes but received 0xfd8 bytes` and writes no
+  file. The same read at **`-b 115200`** works and takes about 25 s for 256 KB.
+  Use 115200 for any read-back.
+- esptool 5 spells commands and options with hyphens (`write-flash`,
+  `read-flash`, `erase-region`, `--flash-mode`). A `flash_args` written by an
+  ESP-IDF 5 build uses underscores on its first line. Rewriting that line
+  (`sed '1s/_/-/g'`) before passing it to esptool 5 worked every time.
+  `(untested: whether esptool 5 still accepts the underscored spellings)`
+
 GDB: `~/.espressif/tools/xtensa-esp-elf-gdb/16.3_20250913/xtensa-esp-elf-gdb/bin/xtensa-esp32-elf-gdb`.
 Connect to `localhost:3333`. Run with `-nx` - the repo ships a `test/gdbinit`
 (no leading dot, so not auto-loaded) that arms sysview tracing breakpoints.

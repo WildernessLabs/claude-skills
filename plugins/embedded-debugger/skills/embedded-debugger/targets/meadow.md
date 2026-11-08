@@ -45,7 +45,13 @@ STM32 repositories.
 | ESP32 | Espressif's `openocd-esp32` fork, from the ESP-IDF tool install | first on `PATH` |
 
 Version in use for the STM32 `(measured)`: `0.12.0+dev-02429-ge4c49d860
-(2026-04-03)`.
+(2026-04-03)` until 2026-11-04; since then `0.12.0+dev-02429-ge4c49d860-dirty
+(2026-11-04)`, built from local branch `FixGDBPythonScripts` (commit `dbe84365c`),
+which fixes the NuttX 12 `g_tcbinfo` layout (see "Threads" below). The tree is a
+plain clone of upstream `openocd-org/openocd` -- no Meadow patches before that
+commit, and no fork remote to push to. Rebuilding it needed `./configure` re-run
+with the options in `config.log`, because Homebrew had moved libusb (1.0.29 to
+1.0.30) and the old include path was gone.
 
 **Legacy and Rebase need different builds because the NuttX decoding differs in
 each tool.** The two repositories carry different NuttX versions, and an
@@ -94,20 +100,53 @@ happened twice in one session. Two habits prevent it:
 To recover, use `-c init -c halt -c resume`. A plain `resume` fails with "not
 halted" when OpenOCD has not yet seen the halt itself.
 
-**Thread ids are not TCB addresses.** The ids OpenOCD's `-rtos nuttx` shows,
-for example `Thread 537215456`, are not `struct tcb_s` addresses, and reading
-them as TCBs gives zeros. The reliable route:
+**Is it actually running?** `(measured, 2026-11-04)` Read `g_system_ticks` (1 ms
+per tick), `monitor resume`, wait 2 s, `monitor halt`, `maintenance flush
+register-cache`, read it again. Once, after a fresh flash of 2.999.53.6, the
+board was found frozen with the counter stuck at 30848 -- it had stopped 30.8 s
+after boot, during Mono JIT start-up (PC in `compute_dominators`), minutes
+before any debugger attached -- and every resume then double-faulted into
+lockup ("clearing lockup after double fault" in the OpenOCD log). A reset
+cleared it; not investigated. For tests on a running board, start OpenOCD
+without `debug.cfg`'s `reset init` (same lines, ending at `init`).
+
+**Threads** `(repo + measured, 2026-11-04)`. The thread id OpenOCD's `-rtos
+nuttx` gives each task **is** its `struct tcb_s` address (`thread->threadid =
+tcbaddr` in `src/rtos/nuttx.c`; GDB shows it as `Thread 537215368` =
+`0x20054188`, `ptid[1]` in Python). An earlier version of this file said it was
+not -- that was wrong.
+
+What used to be broken is the **registers** of tasks that are not running.
+NuttX 12 added `stack_off`/`stack_size_off` to `struct tcbinfo_s` before
+`regs_off`, and upstream OpenOCD (still, on 2026-11-04) reads `g_tcbinfo` in the
+old layout. Measured `g_tcbinfo` = `0x30 0x40 0x34 0xe8 0x70 0x68 0xe0 0x11`: the
+old reader takes `0x70` (`stack_base_ptr`) as the `xcp.regs` offset instead of
+`0xe0`, so `bt`, `thread N` and IDE call stacks showed garbage
+(`0xd5c83006 in ?? ()`, "unable to determine sp alias") for every waiting task.
+That was the "`bt` on a waiting thread gives `0x00000000` frames" seen earlier.
+
+- With the fixed OpenOCD (above), `thread N` then `bt` is correct: it matched
+  `nx_bt <pid>` frame for frame on all 18 tasks.
+- With any OpenOCD, `nx_bt <pid>` (Rebase `gdb/Nuttx.py`, PR #943) works: it
+  loads `tcb->xcp.regs` into the CPU registers, unwinds, and restores them.
+- If thread registers look like garbage, check the OpenOCD version string first.
+
+The raw route still works when the scripts are not loaded:
 
 - walk `g_pidhash[0 .. g_npidhash)`, where each entry is a `struct tcb_s *`;
 - read `task_state` (no SMP: 2 READYTORUN, 3 RUNNING, 5 WAIT_SEM, 6 WAIT_SIG,
   7 WAIT_MQNOTEMPTY), `waitobj`, `sched_priority` and `xcp.regs`;
-- the running task is `((struct tcb_s *)g_readytorun.head)`.
+- the task whose context is in the CPU is `g_running_tasks[0]`. It differs from
+  `g_readytorun.head` while an exception that switches tasks is being handled
+  (measured at a PendSV: head was the next task, the CPU held the idle task).
 
 A RUNNING state with no saved registers only means that task was on the CPU at
 the halt. Sample several times before concluding anything from it.
 
-`bt` on a waiting thread gives `0x00000000` frames here. To see managed stacks
-there is no shortcut; bisect with `Console.WriteLine` markers in the app.
+Managed stacks: JIT code has no symbols, so a Mono thread's backtrace ends in
+`?? ()` at the first JIT frame. Under `--interp`, `nx_bt` lists the managed
+methods each `mono_interp_exec_method` frame is running (untested on hardware).
+Otherwise bisect with `Console.WriteLine` markers in the app.
 
 Connecting by hand instead (what the measurements below were taken with):
 
@@ -243,9 +282,8 @@ Which of the two is live tells you where a fault happened: a fault taken with
 **The kernel ELF is `nuttx/nuttx.elf`** `(measured)`. The build target is
 `nuttx.elf` (`make -C nuttx MEADOW_OS=1 nuttx.elf`), and nothing produces a file
 called `nuttx/nuttx` -- so a search for that name concludes "the kernel was never
-built" when it was. `gdb/.gdbinit` has this right and loads `../nuttx/nuttx.elf`;
-`Documentation/Debugging.md` has it wrong in two places, both its Prerequisites
-and its `load-nuttx-symbols` listing.
+built" when it was. `gdb/.gdbinit` has this right and loads `../nuttx/nuttx.elf`, and so does
+`Documentation/Debugging.md` since PR #943.
 
 Do not reach for `nuttx_user.elf` for a kernel address: its `.text` runs
 `0x08040238`-`~0x08105840`, `addr2line` returns `?? ??:0` for anything in the
@@ -727,32 +765,93 @@ hook that would provide one is compiled out and unimplemented.
   `Failed to read memory`. Reaching it means going through the QSPI driver or
   hcom, not the debugger.
 
-`gdb/.gdbinit` also feeds OpenOCD the NuttX TCB offsets, and it **derives them
-from the loaded symbols** rather than hardcoding them:
+### `gdb/.gdbinit` and the GDB scripts `(repo + measured, 2026-11-04)`
 
-```gdb
-eval "monitor nuttx.pid_offset %d", &((struct tcb_s *)(0))->pid
-eval "monitor nuttx.xcpreg_offset %d", &((struct tcb_s *)(0))->xcp.regs
-eval "monitor nuttx.state_offset %d", &((struct tcb_s *)(0))->task_state
-```
+**Before PR #943, `gdb/.gdbinit` stopped at line 99** on `monitor
+nuttx.g_tasklisttable_size 72`: that OpenOCD has no `nuttx.*` commands, and any
+error ends a `.gdbinit`. So the `eval "monitor nuttx.*_offset"` lines (an earlier
+version of this file praised them) never ran, and neither did anything after
+them. OpenOCD reads the TCB offsets from `g_tcbinfo` in the firmware; GDB has
+nothing to send. The scripts were also Python 2 / older-NuttX code and most
+commands failed (`nx_bt`: "Bad register" on `xPSR`).
 
-An earlier draft of this file warned that these offsets could go stale when a
-NuttX change moved a field. **They cannot** -- literal values are present but
-commented out, and the `eval` form recomputes them every session. That is the
-correct reading of the file.
+PR #943 (branch `FixGDBPythonScripts`) rewrote them. What they give:
 
-The exposure is different and worth knowing: because the offsets come from the
-symbols, **loading symbols that do not match the firmware yields a wrong task
-list rather than an error**. `monitor nuttx.g_tasklisttable_size 72` is still a
-literal, so it can drift. Suspect the symbol files before believing a bizarre
-task list.
+| Command | Use |
+|---|---|
+| `bt` | now crosses `dispatch_syscall` (kernel -> user code that made the syscall) and `exception_common` (handler -> interrupted code), through a Python frame unwinder in `Nuttx.py` |
+| `nx_bt [pid] [nomanaged]` | backtrace of any task, annotated (exception name, SVC/syscall), Mono interpreter frames expanded |
+| `nx_tasks`, `nx_task <pid>` | state, priority, stack use, wait object (semaphore, mutex holder pid, message queue), open files, saved registers |
+| `show interrupted-thread` | the context an exception interrupted, from a stop inside a handler |
+| `nx_dumpregs <addr>`, `nx_dumpregs_hw <addr>` | decode a NuttX register save area / a hardware exception frame |
+| `show heap [user\|kernel]`, `nx_check_heap` | walk and check the NuttX 12 heap (35k user nodes in ~15 s) |
+| `trace_heap_start [heap] [max_events]`, `show heap_trace` | record un-freed allocations with backtraces |
+| `dmesg` / `nx_dmesg` | the RAM log, decoded |
+| `nx_alive [s]` | running or stuck? DHCSR (halted/sleep/LOCKUP) and `g_system_ticks` across a short resume (~1000/s healthy) |
+| `nx_reset` | BK30R reset reason (RCC_CSR flags: `0x14` = pin + software), reset/power-cycle counts, BK31R Meadow flags (e.g. "Mono lockup on last run"), BK29R fault-logging status |
+| `nx_fault` | CFSR/HFSR/DFSR decoded, MMFAR/BFAR, vector-catch state, interrupted context and `nx_bt` -- the hard-fault recipe below in one command |
+| `nx_mpu`, `nx_irqs [all]` | MPU regions named by section/heap; NVIC enable/pending/active with handler and SVD name |
+| `espcp_status` | ESP32 link: mode, the named queues and who waits on each, requests awaiting a response, error counters |
+| `svd PERIPH [REG]` | peripheral registers from `gdb/STM32F777.svd`, field by field (skips DR/RDR/RXDR/FIFO unless named) |
+| `nx_jit <addr>`, `nx_jit_compile` | the managed method for a JIT address (walks `jit_info_table`); what is being JIT-compiled. `nx_bt` names JIT frames `[JIT] Class::Method+0x..` |
 
-GDB helpers in `gdb/`: `Nuttx.py` (tasks, stacks), `Nuttx_Tasks.py` (TCB
-pretty-printer), `NuttxHeap.py` (heap blocks), `NVIC.py`, `Tracing.py`,
-`gdb-dashboard.src`, `ignore_signals.py`, and `STM32F777.svd` for register
-decode. They need GDB's embedded Python to match a venv the script builds --
-`debug.sh` rebuilds `.venv` when the versions drift, so run GDB through
-`debug.sh` rather than directly unless there is a reason not to.
+`Nuttx.py` must be sourced first; the others use its helpers. `.gdbinit` also
+sources the upstream `nuttx/tools/pynuttx` scripts, which override `info
+threads` and warn about missing numpy etc. unless `debug.sh` built `.venv`.
+
+Branch `GDBDebugCommands` (2026-11-04, on top of #943) adds `Meadow.py`, `Svd.py`, `Mono.py` and
+`build.sh --gdbdiag` (STACK_COLORATION: "Max" column in `nx_tasks`). Measured high-water marks then:
+MonoStdxxx 1052/1832, Traverse 1032/1832, EspcpEventHandler 2200/3848, Mono 21728/65304.
+
+Upstream pynuttx on this build `(measured, 2026-11-04)`: works -- `info nxthreads`, `deadlock`, `wdog`,
+`fdinfo`, `mount`, `foreach inode`, `hexdump`, `addr2line`, `mm heap/frag/free/dump`; partial --
+`irqinfo` (no counts: SCHED_IRQMONITOR needs PROCFS), `stack-usage` (max always 0); broken -- `ps`,
+`mm check`; not registered -- `worker`, `netstats`, `mm map`, `mm leak` (pynuttx keys them off config
+macros the build lacks).
+
+Traps:
+
+- **Never name a GDB command starting `mon`** (e.g. `mono_jit`): it makes the abbreviation `mon`
+  ambiguous, `.gdbinit`'s `mon gdb breakpoint_override hard` errors and the rest of the file is
+  skipped, and everyone's `mon reset halt` breaks.
+- **GDB gives r0-r12 a signed type** `(measured, 2026-11-04)`: a pointer in SDRAM (`0xc0...`) read
+  as `int(frame.read_register("r11"))` is negative and `read_memory` fails. Mask with `& 0xffffffff`
+  (Nuttx.py `nx_reg`). Every SRAM test passed; only Mono/.NET threads (SDRAM stacks) exposed it.
+- **A Python unwinder must not hand GDB an interrupted PC directly**: GDB looks up PC-1 for every
+  outer frame, which at a fault lands in the previous function. Return EXC_RETURN and the hardware
+  frame instead, so GDB's own exception unwinder (no PC-1) takes over. Proved with a deliberate NULL
+  write in `hcom_main`: vector catch and `hbreak arm_memfault` both name the faulting line.
+- **Kernel NULL accesses fault too** `(measured, 2026-11-04)`: ITCM is disabled
+  (`CONFIG_ARMV7M_ITCM` off, ITCMCR 0xE000EF90 = 0x72), so a privileged read of address 4 gave
+  CFSR 0x8200 (BusFault PRECISERR, BFAR 0x4) escalated to HardFault (HFSR FORCED). User-mode NULL is
+  a MemManage DACCVIOL instead (MPU). Do not resume after rewriting PC inside an active exception:
+  the core ran off to PC 0 and needed a reset.
+- **The debug port cannot write the disabled ITCM** (reads return 0, writes fail); run test code
+  from unused stack instead (the bottom of a coloured stack reads `0xdeadbeef`).
+- **`MM_BACKTRACE >= 0` does not link in the protected build**: the user-space copy of `mm_heap`
+  (`mm_mallinfo.c`, `mm_memdump.c`) calls kernel-only `nxsched_get_tcb()`.
+- **`vector_catch all` now takes effect** (it was after line 99). It lives in
+  DEMCR and **stays set after GDB detaches**, so a later CLI reset leaves the core
+  halted at the reset vector. Send `monitor cortex_m vector_catch none` before
+  leaving the board to run on its own.
+- **NuttX `arm_exception.S` CFI is wrong** (issue #942): the code keeps the
+  register-area pointer in `r11` (`mov fp, r1`) but `.cfi_def_cfa r4`. Without
+  the `Nuttx.py` unwinder, `bt` from inside a handler ends at `exception_common`
+  with "previous frame inner to this frame".
+- **The saved SP is 72 bytes high for standard (non-FPU) exception frames**:
+  `exception_common` stores `r1 + 104` regardless of `EXC_RETURN` bit 4. Derive
+  the SP from `EXC_RETURN` (word 11) when decoding a context by hand.
+- **Symbols that do not match the firmware give a wrong task list, not an
+  error.** Suspect the symbol files before believing a bizarre task list.
+- A Python frame unwinder must not call `gdb.newest_frame()` or
+  `parse_and_eval` (GDB aborts, exit 134); breakpoints whose Python `stop()`
+  returns False swallow an external halt (use an event limit instead).
+
+Other files in `gdb/`: `NVIC.py` (constants only, not loaded),
+`gdb-dashboard.src`, `ignore_signals.py` (an LLDB script), and `STM32F777.svd`
+for register decode. They need GDB's embedded Python to match a venv the script
+builds -- `debug.sh` rebuilds `.venv` when the versions drift, so run GDB
+through `debug.sh` rather than directly unless there is a reason not to.
 
 `enable_hardfault` is a `.gdbinit` macro that sets the DEMCR bit trapping
 divide-by-zero and unaligned access. Neither faults by default, so a bug of
@@ -1082,7 +1181,8 @@ openocd ... -c init -c halt -c "dump_image ramlog.bin <g_sysbuffer> 0x8000" -c r
 # decode: head = u32 at offset 4; data = buf[8:8+head] if head <= len else rotate by head % len
 ```
 
-From inside a GDB stop: `dump binary memory ramlog.bin <addr> <addr+0x8000>`.
+From inside a GDB stop with the Rebase scripts loaded: `dmesg` (or `nx_dmesg`)
+prints it decoded. Without them: `dump binary memory ramlog.bin <addr> <addr+0x8000>`.
 Dump it **at** the event (a breakpoint on the reset or fault path), because the
 next boot overwrites it.
 
@@ -1166,6 +1266,11 @@ FPU enabled the software part is 28 words (`SW_INT_REGS 12 + SW_FPU_REGS 16`):
 | 34 | PC |
 | 35 | xPSR |
 
+Word 10 is CONTROL and word 11 EXC_RETURN; word 0 assumes an extended (FPU)
+hardware frame, so it is 72 bytes high when EXC_RETURN bit 4 is set (#942).
+With the Rebase scripts, `nx_dumpregs $r1` decodes it, `show
+interrupted-thread` finds it without a breakpoint argument, and `bt` continues
+into the faulting code. By hand:
 `printf "%#x %#x\n", ((unsigned*)$r1)[34], ((unsigned*)$r1)[33]`, then
 `info symbol` on both and `x/12i` around the PC. Read `CFSR` (`0xE000ED28`) in
 the same stop. One measured case: `CFSR = 0x01000000` is UsageFault UNALIGNED,
@@ -1608,8 +1713,13 @@ finished, or the live DNS check fails.
   writing `Meadow.OS.bin`, but a change to that ordering would try to.
 
 - **Looking for `nuttx/nuttx` and concluding the kernel was not built.** The
-  artefact is `nuttx/nuttx.elf`. `Documentation/Debugging.md` names the wrong
-  file; `gdb/.gdbinit` names the right one. Believe the `.gdbinit`.
+  artefact is `nuttx/nuttx.elf`, which `gdb/.gdbinit` and (since PR #943)
+  `Documentation/Debugging.md` both name.
+
+- **Believing a garbage thread backtrace** `(measured, 2026-11-04)`. Before the
+  OpenOCD `g_tcbinfo` fix, every task that was not running showed nonsense
+  frames. It looked like stack corruption and was the debugger's offset table.
+  Check one task with `nx_bt <pid>` before concluding anything from `thread N`.
 
 - **A rebuild does not match the flashed image, even at the same version**
   `(measured)`. Rebuilding produced `1.99.0.19595`, the same string the board
