@@ -410,10 +410,10 @@ directory that disappears with the session.
   Meadow CLI (version gate, firmware store, what the deploy deletes) and
   checking GPIO at the pins over SWD; proving JIT versus interpreter, running
   Mono's mini test suite with the test runner and its baseline, thread names
-  and NSH `ps` on the second CDC port, and how ESP32 socket errors reach an app;
+  and the second CDC port of a `--dualcdc` build (NSH `ps` with `--nsh`, the syslog without it), and how ESP32 socket errors reach an app;
   a late fault that looks like a hang (reset code `0x14`), breaking a
   fault-driven reset loop, naming the method the JIT is compiling, probing JIT
-  calling conventions from managed code, and Mono mixed mode (`--interp=jit=`).
+  calling conventions from managed code, and Mono mixed mode (`--interp=jit=`); the BG95-M3 cell modem over PPP: freeing COM1, the cell config files, the console-echo trap and reading the modem UART with an optional receive-only sniffer port.
   Read the two family files first
 - `targets/meadow-esp32-trace.md` - decoding the Meadow ESP32 console: the
   `+++RST/RDY/SIR/MW/BSY` control markers (the console *is* the control link),
@@ -427,5 +427,8 @@ directory that disappears with the session.
 - `tools/meadow_ports.py` - finds the Meadow bench ports (Meadow CDC, ST-Link
   VCP, ESP-Prog JTAG and console) by USB vendor/product ID, because the node
   names change when the USB layout does
+- `tools/meadow_modem_at.py` - sends AT commands to the Meadow's cell modem through a USB-serial
+  adapter wired to its UART and logs the replies (see "Talking to the modem directly" in
+  `targets/meadow.md`)
 - `tools/meadow_esp32_log.py` - collapses a Meadow ESP32 capture into one line
   per message with decoded payloads, and summarises the control markers
