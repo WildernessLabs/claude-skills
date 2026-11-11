@@ -100,6 +100,15 @@ happened twice in one session. Two habits prevent it:
 To recover, use `-c init -c halt -c resume`. A plain `resume` fails with "not
 halted" when OpenOCD has not yet seen the halt itself.
 
+**`gdb-detach` resume** `(repo + measured, 2026-11-11; Rebase PR #949)`. An IDE's
+Stop (CLion's, at least) halts the core *before* GDB detaches, so every IDE
+session ended with the board halted, even after a Resume. `debug.cfg` and
+`debug-attach.cfg` now carry `stm32f7x.cpu configure -event gdb-detach { resume }`:
+after a Stop while paused (in `up_idle`, and at a breakpoint mid-boot) the core
+ran on and `meadow device info` answered. Check for the line before relying on
+it -- a checkout without #949, or a hand-made cfg, still leaves the core halted.
+It does not help when OpenOCD itself is killed while GDB is attached.
+
 **Is it actually running?** `(measured, 2026-11-04)` Read `g_system_ticks` (1 ms
 per tick), `monitor resume`, wait 2 s, `monitor halt`, `maintenance flush
 register-cache`, read it again. Once, after a fresh flash of 2.999.53.6, the
@@ -108,7 +117,15 @@ after boot, during Mono JIT start-up (PC in `compute_dominators`), minutes
 before any debugger attached -- and every resume then double-faulted into
 lockup ("clearing lockup after double fault" in the OpenOCD log). A reset
 cleared it; not investigated. For tests on a running board, start OpenOCD
-without `debug.cfg`'s `reset init` (same lines, ending at `init`).
+without `debug.cfg`'s `reset init`: Rebase now has `debug-attach.cfg` for this
+`(repo, PR #948)` -- the same lines as `debug.cfg`, ending at `init`:
+
+```bash
+"$MEADOW_OPENOCD_DIR/src/openocd" -s "$MEADOW_OPENOCD_DIR/tcl" -f debug-attach.cfg
+```
+
+A GDB `target remote` still halts the core when it connects; that is GDB, not
+the cfg.
 
 **Threads** `(repo + measured, 2026-11-04)`. The thread id OpenOCD's `-rtos
 nuttx` gives each task **is** its `struct tcb_s` address (`thread->threadid =
@@ -159,6 +176,48 @@ Connecting by hand instead (what the measurements below were taken with):
 `--stlink` switches `debug.sh` to `st-util` instead, which wants
 `stlink/build/Release/src/gdbserver/st-util`; that binary is **not built** on
 this bench, so the flag fails rather than falling back.
+
+### CLion on Rebase `(repo + measured, 2026-11-11; PRs #948, #949)`
+
+The user also debugs from CLion 2026.3. Set-up and the reasons behind each choice
+are in Rebase's `Documentation/CLion.md`; what matters when you are driving:
+
+- **Configurations.** Build (incremental / full clean / wlclean / dual CDC, full
+  clean), Deploy (OS + runtime) = `scripts/deploy.sh`, and **Embedded Meadow
+  (reset)** / **Embedded Meadow (attach)** for debugging. The Embedded ones are
+  CLion's Embedded GDB Server type: CLion starts OpenOCD (`debug.cfg` /
+  `debug-attach.cfg`) with the session and stops it at the end, so port 4242 is
+  free between sessions. Only this session type has CLion's Peripherals view
+  (`gdb/STM32F777.svd`).
+- **Reset session resumes by itself.** Embedded Meadow (reset) halts at the
+  bootloader entry (`pc: 0x0801161c`) and CLion then continues, so a breakpoint
+  in `hcom_main()` is hit about 1.1 s after boot without pressing Resume.
+- **`.gdbinit` runs, silently.** GDB starts in the workspace root, where a local
+  `.gdbinit` (from `tools/clion/workspace.gdbinit`) runs `gdb/clion.gdbinit`:
+  symbols for kernel, user image and bootloader plus the Meadow/NuttX commands,
+  but no connect and no `monitor` commands. Embedded sessions do not echo its
+  output; `dmesg` working is the proof. GDB's cwd is then `gdb/`.
+- **Driving it yourself.** The `clion` MCP server's `xdebug_*` tools work on
+  these sessions: `xdebug_start_debugger_session` by configuration name,
+  `xdebug_get_stack`, `xdebug_evaluate_expression` (C expressions only -- no
+  `/x` format, no GDB commands), `xdebug_control_session` RESUME/PAUSE/STOP.
+  `execute_run_configuration` with `waitForExit=false` runs Build/Deploy; the
+  output goes to `~/Library/Caches/JetBrains/CLion2026.3/tmp/ij_run_<name>_*.log`
+  (also where an Embedded session's OpenOCD output lands).
+- **The user's open session is theirs.** Read from it (status, breakpoints,
+  evaluate) but do not resume, stop or replace it without asking -- a resume was
+  refused once.
+- **Which debugger CLion really started:** `~/Library/Logs/JetBrains/CLion2026.3/idea.log`,
+  lines `CidrDebugProcess ... Debugger started:`. `LLDBFrontend` there means the
+  GDB choice was not picked up (the session then fails with "unsupported
+  connection URL: ''").
+- **After any CLion session, check DHCSR** as above. Before the `gdb-detach`
+  line was added, CLion's Stop left the core halted every time; a failed attach
+  (GDB halting the core while CLion killed OpenOCD) did too.
+- **Unexplained, 2026-11-11:** twice the board rebooted while an attach session
+  was open (uptime ~1.1 s at a boot breakpoint). The first was a bad
+  `reset-type` value (fixed); the second, with `reset-type="NEVER"`, was not
+  explained -- `RCC_CSR` reset flags had already been cleared by boot.
 
 ### Legacy differs from Rebase in one way that changes behaviour `(repo)`
 
@@ -995,6 +1054,14 @@ flash the OS, `reset run` over SWD, check the `/dev/tty.usbmodem<serial>`
 port exists, `meadow firmware write runtime`, `meadow file delete
 Meadow.OS.Runtime.bin`, `meadow runtime enable`, then `meadow device info` to
 confirm the OS and runtime versions match.
+
+**`scripts/deploy.sh` does this sequence** `(repo + measured, 2026-11-11; Rebase
+PR #948)`: runtime disable, `flash.sh`, SWD `reset run` under an alarm, wait for
+the Meadow port, `firmware write runtime -f nuttx/Meadow.OS.Runtime.bin` (one
+retry after a disable on an erase time-out), delete, enable, device info. It
+refuses to start while anything listens on port 4242 -- stop the debug session
+first. Prefer it over typing the steps; run it in the background and wait on
+its `Runtime: ` line (a full deploy took about 4 minutes).
 
 **When managed results are numerically wrong, suspect the Thumb-2 JIT encoder**
 `(measured, 2026-10-15)`. The runtime's `src/mono/mono/arch/arm/thumb-codegen.h`

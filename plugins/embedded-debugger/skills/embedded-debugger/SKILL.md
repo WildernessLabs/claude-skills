@@ -35,6 +35,20 @@ lsof -nP -iTCP:3333
 If the user has an interactive GDB attached, ask them to quit it rather than
 killing their process.
 
+### When the user debugs from an IDE
+
+If the IDE exposes its debugger through tools (CLion's MCP server has
+`xdebug_start_debugger_session`, `xdebug_get_stack`,
+`xdebug_evaluate_expression`, `xdebug_control_session`), you can run the
+user's own debug configurations and read the results directly, instead of
+asking them to click and report. Two rules:
+
+- **The session the user has open is theirs.** Reading from it is fine;
+  resuming, stopping or replacing it is not, without asking.
+- **Confirm what the IDE actually launched** before blaming the target. IDEs
+  fall back silently (CLion ran its bundled LLDB instead of the chosen GDB);
+  the IDE's own log names the debugger and its arguments.
+
 ## 1b. Take over the serial console too
 
 The application's own output is usually the *better* instrument - it survives
@@ -271,6 +285,12 @@ the exact instruction of interest over a broad sweep with a condition.
   triggers, and on many SoCs a ROM/second-stage bootloader **copies RAM
   sections from flash on every boot**, erasing software breakpoints placed in
   those regions. GDB reports both as armed. See the two-stage pattern below.
+- **Ending a session can leave the core halted.** A `detach`, a killed GDB
+  server, and an IDE's Stop (which halts before detaching) all can. The
+  firmware then looks dead to everything else on the host. With OpenOCD, make
+  the server resume on disconnect:
+  `<target>.cpu configure -event gdb-detach { resume }`. Either way, read the
+  halt bit after every session (`DHCSR` bit 17 on Cortex-M).
 - **Console silence proves nothing.** Firmware logging and application output
   often share one link; output can sit buffered, and a blocking driver can stop
   delivery while execution continues.
@@ -413,7 +433,7 @@ directory that disappears with the session.
   and the second CDC port of a `--dualcdc` build (NSH `ps` with `--nsh`, the syslog without it), and how ESP32 socket errors reach an app;
   a late fault that looks like a hang (reset code `0x14`), breaking a
   fault-driven reset loop, naming the method the JIT is compiling, probing JIT
-  calling conventions from managed code, and Mono mixed mode (`--interp=jit=`); the BG95-M3 cell modem over PPP: freeing COM1, the cell config files, the console-echo trap and reading the modem UART with an optional receive-only sniffer port.
+  calling conventions from managed code, and Mono mixed mode (`--interp=jit=`); the BG95-M3 cell modem over PPP: freeing COM1, the cell config files, the console-echo trap and reading the modem UART with an optional receive-only sniffer port; and the user's CLion set-up (Embedded GDB Server configurations, `scripts/deploy.sh`, `debug-attach.cfg`, the `gdb-detach` resume) and driving it through the CLion MCP tools.
   Read the two family files first
 - `targets/meadow-esp32-trace.md` - decoding the Meadow ESP32 console: the
   `+++RST/RDY/SIR/MW/BSY` control markers (the console *is* the control link),
