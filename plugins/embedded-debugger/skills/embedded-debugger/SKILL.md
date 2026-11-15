@@ -433,7 +433,7 @@ directory that disappears with the session.
   and the second CDC port of a `--dualcdc` build (NSH `ps` with `--nsh`, the syslog without it), and how ESP32 socket errors reach an app;
   a late fault that looks like a hang (reset code `0x14`), breaking a
   fault-driven reset loop, naming the method the JIT is compiling, probing JIT
-  calling conventions from managed code, and Mono mixed mode (`--interp=jit=`); the BG95-M3 cell modem over PPP: freeing COM1, the cell config files, the console-echo trap and reading the modem UART with an optional receive-only sniffer port; and the user's CLion set-up (Embedded GDB Server configurations, `scripts/deploy.sh`, `debug-attach.cfg`, the `gdb-detach` resume) and driving it through the CLion MCP tools.
+  calling conventions from managed code, and Mono mixed mode (`--interp=jit=`); the BG95-M3 cell modem over PPP: freeing COM1, the cell config files, the console-echo trap and reading the modem UART with an optional receive-only sniffer port; and the user's CLion set-up (Embedded GDB Server configurations, `scripts/deploy.sh`, `debug-attach.cfg`, the `gdb-detach` resume) and driving it through the CLion MCP tools; running Meadow.OS (Rebase) or Legacy meadow-3.0 under the Renode emulator (`OS/Meadow.OS.Emulator`): configs, the build wrapper and runtime-branch matching, Meadow.CLI over `socket://localhost:4242`, booting a pre-built LittleFS image with `--mount`, and GDB that waits at reset with `--gdb`.
   Read the two family files first
 - `targets/meadow-esp32-trace.md` - decoding the Meadow ESP32 console: the
   `+++RST/RDY/SIR/MW/BSY` control markers (the console *is* the control link),
