@@ -37,7 +37,7 @@ first halt rather than copying a command line:
 
 | Firmware | Setting | Why |
 |---|---|---|
-| ESP-IDF | leave the default | IDF *is* FreeRTOS, so the awareness matches reality and gives you real thread listings. `(measured, ESP32 + IDF v5.5.3, 2026-09 - see esp32-pico-d4-espprog.md)`: `info threads` gave 12 real tasks with names, states and per-core placement |
+| ESP-IDF | leave the default | IDF *is* FreeRTOS, so the awareness matches reality and gives you real thread listings. `(measured, ESP32 + IDF v5.5.3, 2026-09 - see esp32-pico-d4-espprog.md)`: `info threads` gave 12 real tasks with names, states and per-core placement - **but not under CLion 2026.3**: there it makes CLion miss the first breakpoint stop after a reset; use `none` (measured on the P4, see `esp32p4.md`) |
 | NuttX | `-c 'set ESP_RTOS none'` | `(measured)` without it, OpenOCD errors on every halt - `Don't have the number of threads in FreeRTOS!` - which is noise plus a per-halt cost |
 | Zephyr, bare metal, anything else | almost certainly `none` | the server is looking for structures that are not there |
 

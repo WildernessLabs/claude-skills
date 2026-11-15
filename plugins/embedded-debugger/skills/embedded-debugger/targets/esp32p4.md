@@ -239,3 +239,46 @@ Beyond the family list:
    wrongly rejected before the board itself was suspected. When a control that
    *should* pass starts failing, doubt the hardware state before the change.
    See "External PSRAM keeps state across a reset".
+
+## ESP-IDF on the Tab5 from CLion `(measured, 2026-11-11, IDF v6.1, ESP32-P4-Protected-Mode-Sample)`
+
+- **Software breakpoints in IRAM do not survive the reset.** CLion line
+  breakpoints are `Z0`. With `monitor reset halt` then `break user_main.c:168`
+  (an `IRAM_ATTR` function at `0x4ff02a9c`) and `continue`, nothing fired in
+  60 s. The same run with `gdb breakpoint_override hard` in the OpenOCD cfg hit
+  at once (`Thread 2 "user0" hit Breakpoint 1`). Espressif's `esp_common.cfg`
+  sets that override only when flash support is off, so add it yourself.
+- **Espressif's OpenOCD has no `gdb-detach` resume.** Add
+  `$_TARGETNAME_0 configure -event gdb-detach { if {[$_TARGETNAME_0 curstate] eq "halted"} { resume } }`
+  - a bare `resume` errors `Not halted` when GDB was killed while running.
+  `$_TARGETNAME_0` is `esp32p4.hp.cpu0`. Measured: after CLion's Stop the UART
+  console kept printing.
+- **CLion misses the first stop with FreeRTOS awareness on.** That stop
+  replaces GDB's pre-scheduler thread 1 with the task threads (2..8) and is
+  reported on thread 2; CLion 2026.3 logs `SEVERE ... Cannot retrieve info for
+  thread 2` and the session stays "running" in the UI while OpenOCD's telnet
+  (`nc localhost 4444`, `targets`, `reg pc`) shows the core halted at the
+  breakpoint. 2 of 3 launches failed with awareness on, 0 of 3 with
+  `set ESP_RTOS none` (before sourcing the board cfg); plain GDB/MI answered
+  `-thread-info 2` fine. So on this IDE the `ESP_RTOS` table's "leave the
+  default for ESP-IDF" does not hold - use `none` and lose the task list.
+  **Correction (2026-11-11, same day, same board/IDE/OpenOCD): not general.**
+  A plain ESP-IDF app (Tab5SSEM, IDF 6.1, OpenOCD v0.12.0-esp32-20260703,
+  breakpoint in `app_main` in flash) with awareness **on** stopped correctly in
+  CLion 3 of 3 launches, stop on thread 2 `main` with six task threads, core
+  confirmed halted via OpenOCD telnet; no "Cannot retrieve info" in idea.log.
+  The failure is so far seen only in the protected-mode sample (breakpoint in
+  an IRAM user-mode task); its cause there is not isolated. Default to
+  awareness on for ordinary ESP-IDF apps and fall back to `none` only on the
+  symptom.
+- **The `<debugger kind="GDB">path</debugger>` element in an Embedded GDB Server
+  run config wins over the toolchain's debugger**: the project's toolchain was
+  `BUNDLED_LLDB` and `idea.log` still showed `riscv32-esp-elf-gdb --interpreter=mi2`.
+- Working config: `.idea/runConfigurations/Tab5_OpenOCD.xml` and `debug.cfg` in
+  that repo; OpenOCD args `-s <scripts> -f debug.cfg -c "init; reset halt"`,
+  `reset-type="NEVER"`, `gdb-connect="tcp:localhost:3333"`. Step Over across
+  `u_syscall1` (an ecall into the kernel and back) works from CLion.
+- IDF 6.1 vs 5.5.x source breaks: `TCM_*`/`SOC_TCM_*` became `SPM_*`, and
+  `hw_stack_guard.h`'s `ESP_HW_STACK_GUARD_SET_BOUNDS_*` now take
+  `reg1 sp_min sp_max` instead of implicitly using `a0`/`a1`; a 5.5-style call
+  assembles to `sw ,offset(t0)` - "illegal operands".
