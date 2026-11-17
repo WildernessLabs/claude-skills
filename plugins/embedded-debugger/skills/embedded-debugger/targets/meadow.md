@@ -100,6 +100,15 @@ happened twice in one session. Two habits prevent it:
 To recover, use `-c init -c halt -c resume`. A plain `resume` fails with "not
 halted" when OpenOCD has not yet seen the halt itself.
 
+**`gdb-detach` resume** `(repo + measured, 2026-11-11; Rebase PR #949)`. An IDE's
+Stop (CLion's, at least) halts the core *before* GDB detaches, so every IDE
+session ended with the board halted, even after a Resume. `debug.cfg` and
+`debug-attach.cfg` now carry `stm32f7x.cpu configure -event gdb-detach { resume }`:
+after a Stop while paused (in `up_idle`, and at a breakpoint mid-boot) the core
+ran on and `meadow device info` answered. Check for the line before relying on
+it -- a checkout without #949, or a hand-made cfg, still leaves the core halted.
+It does not help when OpenOCD itself is killed while GDB is attached.
+
 **Is it actually running?** `(measured, 2026-11-04)` Read `g_system_ticks` (1 ms
 per tick), `monitor resume`, wait 2 s, `monitor halt`, `maintenance flush
 register-cache`, read it again. Once, after a fresh flash of 2.999.53.6, the
@@ -108,7 +117,15 @@ after boot, during Mono JIT start-up (PC in `compute_dominators`), minutes
 before any debugger attached -- and every resume then double-faulted into
 lockup ("clearing lockup after double fault" in the OpenOCD log). A reset
 cleared it; not investigated. For tests on a running board, start OpenOCD
-without `debug.cfg`'s `reset init` (same lines, ending at `init`).
+without `debug.cfg`'s `reset init`: Rebase now has `debug-attach.cfg` for this
+`(repo, PR #948)` -- the same lines as `debug.cfg`, ending at `init`:
+
+```bash
+"$MEADOW_OPENOCD_DIR/src/openocd" -s "$MEADOW_OPENOCD_DIR/tcl" -f debug-attach.cfg
+```
+
+A GDB `target remote` still halts the core when it connects; that is GDB, not
+the cfg.
 
 **Threads** `(repo + measured, 2026-11-04)`. The thread id OpenOCD's `-rtos
 nuttx` gives each task **is** its `struct tcb_s` address (`thread->threadid =
@@ -159,6 +176,48 @@ Connecting by hand instead (what the measurements below were taken with):
 `--stlink` switches `debug.sh` to `st-util` instead, which wants
 `stlink/build/Release/src/gdbserver/st-util`; that binary is **not built** on
 this bench, so the flag fails rather than falling back.
+
+### CLion on Rebase `(repo + measured, 2026-11-11; PRs #948, #949)`
+
+The user also debugs from CLion 2026.3. Set-up and the reasons behind each choice
+are in Rebase's `Documentation/CLion.md`; what matters when you are driving:
+
+- **Configurations.** Build (incremental / full clean / wlclean / dual CDC, full
+  clean), Deploy (OS + runtime) = `scripts/deploy.sh`, and **Embedded Meadow
+  (reset)** / **Embedded Meadow (attach)** for debugging. The Embedded ones are
+  CLion's Embedded GDB Server type: CLion starts OpenOCD (`debug.cfg` /
+  `debug-attach.cfg`) with the session and stops it at the end, so port 4242 is
+  free between sessions. Only this session type has CLion's Peripherals view
+  (`gdb/STM32F777.svd`).
+- **Reset session resumes by itself.** Embedded Meadow (reset) halts at the
+  bootloader entry (`pc: 0x0801161c`) and CLion then continues, so a breakpoint
+  in `hcom_main()` is hit about 1.1 s after boot without pressing Resume.
+- **`.gdbinit` runs, silently.** GDB starts in the workspace root, where a local
+  `.gdbinit` (from `tools/clion/workspace.gdbinit`) runs `gdb/clion.gdbinit`:
+  symbols for kernel, user image and bootloader plus the Meadow/NuttX commands,
+  but no connect and no `monitor` commands. Embedded sessions do not echo its
+  output; `dmesg` working is the proof. GDB's cwd is then `gdb/`.
+- **Driving it yourself.** The `clion` MCP server's `xdebug_*` tools work on
+  these sessions: `xdebug_start_debugger_session` by configuration name,
+  `xdebug_get_stack`, `xdebug_evaluate_expression` (C expressions only -- no
+  `/x` format, no GDB commands), `xdebug_control_session` RESUME/PAUSE/STOP.
+  `execute_run_configuration` with `waitForExit=false` runs Build/Deploy; the
+  output goes to `~/Library/Caches/JetBrains/CLion2026.3/tmp/ij_run_<name>_*.log`
+  (also where an Embedded session's OpenOCD output lands).
+- **The user's open session is theirs.** Read from it (status, breakpoints,
+  evaluate) but do not resume, stop or replace it without asking -- a resume was
+  refused once.
+- **Which debugger CLion really started:** `~/Library/Logs/JetBrains/CLion2026.3/idea.log`,
+  lines `CidrDebugProcess ... Debugger started:`. `LLDBFrontend` there means the
+  GDB choice was not picked up (the session then fails with "unsupported
+  connection URL: ''").
+- **After any CLion session, check DHCSR** as above. Before the `gdb-detach`
+  line was added, CLion's Stop left the core halted every time; a failed attach
+  (GDB halting the core while CLion killed OpenOCD) did too.
+- **Unexplained, 2026-11-11:** twice the board rebooted while an attach session
+  was open (uptime ~1.1 s at a boot breakpoint). The first was a bad
+  `reset-type` value (fixed); the second, with `reset-type="NEVER"`, was not
+  explained -- `RCC_CSR` reset flags had already been cleared by boot.
 
 ### Legacy differs from Rebase in one way that changes behaviour `(repo)`
 
@@ -996,6 +1055,14 @@ port exists, `meadow firmware write runtime`, `meadow file delete
 Meadow.OS.Runtime.bin`, `meadow runtime enable`, then `meadow device info` to
 confirm the OS and runtime versions match.
 
+**`scripts/deploy.sh` does this sequence** `(repo + measured, 2026-11-11; Rebase
+PR #948)`: runtime disable, `flash.sh`, SWD `reset run` under an alarm, wait for
+the Meadow port, `firmware write runtime -f nuttx/Meadow.OS.Runtime.bin` (one
+retry after a disable on an erase time-out), delete, enable, device info. It
+refuses to start while anything listens on port 4242 -- stop the debug session
+first. Prefer it over typing the steps; run it in the background and wait on
+its `Runtime: ` line (a full deploy took about 4 minutes).
+
 **When managed results are numerically wrong, suspect the Thumb-2 JIT encoder**
 `(measured, 2026-10-15)`. The runtime's `src/mono/mono/arch/arm/thumb-codegen.h`
 is hand-written for the Meadow port; register shifts were wrong (fixed in
@@ -1065,6 +1132,8 @@ The baseline, on hardware, is the same under the JIT and the interpreter:
   unmanaged pointer.
 - **About 75-115 s per mode**, most of it the deploy.
 - **Legacy's 735/732 and 733/2/1 came from the Renode emulator, never from a board.**
+  Both OSes now give 733/2/1 in Renode on an emulated CCM, the same as a board
+  (see "Running the OS under the Renode emulator").
 
 A drop from 733, or a crash with no `END` line, is a runtime regression worth
 bisecting. The last `Running '<test>' ...` line in the log names the test that
@@ -1675,6 +1744,161 @@ Pthread names lie about which code is running; check the flags and the priority.
 **Native `cell` suite and the managed app:** the deployed CellTests app runs at boot and its GNSS
 request takes the radio for about 95 s. Run `meadow developer -p 20 -v 1` after the app has
 finished, or the live DNS check fails.
+
+## Running the OS under the Renode emulator `(measured, 2026-11-15)`
+
+`OS/Meadow.OS.Emulator` runs the **STM32 side** of a Meadow in Renode, for
+both Meadow.OS (Rebase) and Legacy meadow-3.0. The ESP32 is normally a stub
+(`coprocessor: stub`, `EspcpStub`); `dual-machine` runs the real ESP32 firmware
+on an emulated Xtensa and is slower. Use it when no board is free, to bisect
+quickly, or to get a GDB session that waits at reset -- but a hardware result
+still needs a board (see the MiniTests note above: some numbers so far exist only from Renode).
+
+The emulator needs a patched Renode fork, `OS/renode` (branch
+`meadow-emulator-fixes`, fixes a UART burst bug). `run.sh` finds it via
+`RENODE_PATH`, a sibling `../renode` (`output/bin/Release/Renode.dll`, run with
+`dotnet`), then PATH.
+
+### Configs and which OS checkout each one uses `(repo)`
+
+| Config | OS | Board | Checkout |
+|---|---|---|---|
+| `configs/meadow-os.yaml` | Meadow.OS (Rebase) | F7CoreComputeV2 | `OS/Rebase` on `main` (PR #953 merged) |
+| `configs/legacy-ccm.yaml` | Legacy meadow-3.0, .NET 10 Mono | F7CoreComputeV2 | `OS/Legacy` on `meadow-3.0` (emulator support merged, #817) |
+| `configs/legacy.yaml` | Legacy, Mono 6.9 | F7FeatherV2 | kept but not re-tested since the hook changes (issue #4 proposes removing it) |
+
+`legacy-os_modern-dotnet` and the `meadow-dotnet10-*` scripts are **retired**;
+`read-config.sh` refuses a config that sets `build.runtime`.
+
+Ports, from the config: HCOM on TCP **4242** (Meadow.CLI), Renode monitor
+on **1234**, GDB off unless asked for. The STM32 console goes to
+**`/tmp/renode-uart-meadow.txt`**. Legacy's user-space syslog does not
+reach that file.
+
+### Build `(measured)`
+
+Always build through the emulator's wrapper. It copies `nuttx.elf` and
+regenerates the address-specific hooks, so **re-run it after every OS rebuild**:
+a stale ELF puts every hook at the wrong address.
+
+```bash
+cd OS/Meadow.OS.Emulator
+# Meadow.OS (Rebase)
+MEADOW_EMULATOR_OS_DIR=../Rebase MEADOW_RUNTIME_DIR=../runtime MEADOW_RUNTIME_ALLOW_UNPINNED=1 \
+  ./build-meadow.os-emulated.sh --config configs/meadow-os.yaml [--clean]
+# Legacy meadow-3.0
+MEADOW_RUNTIME_NO_SYNC=1 ./build-meadow.os-emulated.sh --config configs/legacy-ccm.yaml [--clean]
+```
+
+- **The `OS/runtime` branch has to match the OS.** Legacy's `build.sh` and
+  `build-mono.sh` hard-code `../runtime`, which must be on `meadow-3.0`
+  (needs eb92c4cb0eb: thread ID not cached in TLS, since Legacy NuttX has no
+  `__aeabi_read_tp`). Meadow.OS builds and app deploys want `MergeManagedCode`.
+  Building Legacy on `MergeManagedCode` fails with `mono-os-semaphore.h` errno
+  lvalue errors -- that is the wrong branch, not a code bug.
+- `MEADOW_RUNTIME_NO_SYNC=1` stops `build-mono.sh` switching the runtime branch
+  for you. `build-mono.sh` only rebuilds Mono with `--force`.
+- Add `--clean` after a normal (non-emulator) OS build, or any config change, on
+  top of existing objects. The wrapper passes it to the OS `build.sh`.
+- PATH needs the emulator's `tools/` and, for Legacy, `toolchain/macos`
+  (`ld.lld`). GCC 15.3 is the user's chosen compiler.
+- The wrapper stops on a missing or invalid config. It used to carry on
+  regardless.
+
+### Run and check it booted `(measured)`
+
+```bash
+pgrep -f 'renode/output/bin/Release/Renode.dll'    # someone's Renode already up? never kill the user's
+./run.sh --config=configs/meadow-os.yaml           # or --rebase / --legacy; --config FILE also works
+./run.sh --legacy meadow-legacy-headless           # a named script after --legacy/--rebase
+```
+
+Quick boot check: start `run.sh` in the background, wait about 25 s, then
+`meadow device info -s socket://localhost:4242`, then stop Renode.
+`quadspi.w25q: Command decoding failed` appears on every boot and is harmless.
+
+**Firmware boots but the console log is empty and `device info` times out:**
+look for the `kconfig-tweak` shim fault. The wrapper puts the emulator's `tools/`
+first on PATH, so the OS build runs `tools/kconfig-tweak`. Before 4a24941 the
+shim wrote Rebase's bare names (`DEV_CONSOLE`) without `CONFIG_`, Kconfig
+ignored them, and every emulator tweak was lost. Check with
+`grep -nvE '^(CONFIG_|#|$)' <OS>/nuttx/.config`, then rebuild with `--clean`.
+Leftover unprefixed lines after `--clean` are harmless.
+
+### Meadow.CLI against the emulator `(measured)`
+
+Use the released global tool, **3.0.3 or later** (3.0.4 installed; `setup.sh`
+installs or updates it). Always pass `-s socket://localhost:4242`.
+**Never run `meadow config route`**: it overwrites the user's saved USB route.
+
+```bash
+MEADOW_RUNTIME_DIR=OS/runtime MEADOW_CORE_DIR=~/GitHub/WildernessLabs/Meadow.Core \
+  meadow app run <app-dir> -s socket://localhost:4242      # a few minutes
+meadow listen -s socket://localhost:4242                   # output from connect time only
+```
+
+HCOM works only because of UART4 RX flow control on both OSes. Renode
+sends tens of KB into a UART in one burst. Old Legacy NuttX hard-coded UART4
+`.iflow = false`, so bytes were read and dropped.
+
+### Boot from a pre-built file system: `--mount` `(measured)`
+
+`./run.sh ... --mount=FILE` loads a LittleFS image into the QSPI file system
+partition (0x500000, 61,865,984 B, 15,104 blocks) as `/meadow0`. There is no deploy, so it
+reaches `TESTRUN END` in 84 s (Meadow.OS) or 90 s (Legacy), against 216 s and 231 s through `meadow app run`.
+
+| OS | LittleFS | Geometry | Builder |
+|---|---|---|---|
+| Legacy | **v1.7** | read/prog 256 | `tools/build_lfs_v1_image.c` |
+| Meadow.OS | **v2.5.1** | read/prog 1024, block 4096, cache/lookahead 1024 | `tools/build_lfs_v2_image.c` |
+
+Build images with
+`tools/make-lfs-image.sh [--legacy|--rebase|--config=] <publish-dir> <out.bin>`
+(`--pdbs`, `--xmldocs`, `--list`). It applies the same deploy filter as
+Meadow.CLI and builds the correct builder into `build/tools/`. Keep images in
+`fs-images/`, which git ignores. **Never** use the Python
+`build_littlefs_image.py` or Bryan's old `build_littlefs_image.c`: both have
+the wrong version or geometry for both OSes, and NuttX formats over them
+without an error. `run.sh` refuses an image that is too large, is not
+LittleFS, or is the wrong version. To confirm which OS a config picked
+without booting, pass an image of the wrong version and read the refusal.
+
+### GDB `(measured)`
+
+`./run.sh ... --gdb[=PORT]` (default 3333, or a non-zero `ports.gdb`) puts
+`StartGdbServer` and `sysbus.cpu ExecutionMode SingleStep` into
+`build[/legacy]/gdb.resc`. The CPU **waits at reset until GDB continues**. This
+Renode fork has only Continuous and SingleStep, and `start; pause` came too late:
+boot had already passed `lfs_mount`. Only `meadow-os.resc`,
+`meadow-legacy-headless` and `meadow-legacy` include it; `meadow-dual` refuses it.
+
+```bash
+arm-none-eabi-gdb -nx -q -batch build/legacy/nuttx.elf \
+  -ex 'target remote :3333' -ex 'break lfs_mount' -ex continue -ex bt -ex detach
+```
+
+Always pass `-nx`, because the user's `~/.gdbinit` dashboard breaks `-batch`.
+To attach to an emulator that is **already running**, without restarting it:
+
+```bash
+(printf 'machine StartGdbServer 3333\n'; sleep 2) | nc -w 3 localhost 1234
+```
+
+Then walk `g_pidhash[0..g_npidhash)` (name, `task_state`, `xcp.regs[0]` =
+saved SP) and symbolise each stack, as on hardware. For a single register,
+`cpu PC` on the monitor port is enough.
+
+### Emulator traps
+
+- **Legacy hooks that write struct offsets can corrupt Meadow.OS.**
+  `mono_str_fix` matched in Rebase and corrupted the kernel heap. The extractor
+  now skips it unless `EMU_OS=legacy`. Check any other memory-writing Legacy
+  hook before you enable it for Meadow.OS.
+- A sourced script sees its caller's arguments. `read-config.sh` now accepts
+  only `--config=FILE`, `--config FILE` or a `.yaml`/`.yml` argument, and a
+  missing named config is an error.
+- In zsh, `echo ===` fails (use `---`), and a heredoc inside a heredoc needs a
+  different outer delimiter.
 
 ## Wrong turns
 
