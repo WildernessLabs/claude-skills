@@ -411,6 +411,9 @@ directory that disappears with the session.
   breakpoints, the two console ports, interrupt-numbering traps
 - `targets/esp32p4.md` - ESP32-P4 and its CLIC specifically; read the family
   file first
+- `targets/esp32s31.md` - ESP32-S31: a preview target in IDF 6.1 (`idf.py --preview set-target`),
+  two HP harts on the builtin cfg, gdb-detach resume verified, CLion + idf.py
+  sharing build/ through a `default` CMake preset
 - `targets/esp32c6.md` - ESP32-C6: PLIC not CLIC, so the P4 file does not
   apply; resetting through USB-JTAG parks the chip in download mode, the
   bridge takes reads but not bulk writes, flash offset is 0x0 not 0x2000
